@@ -1,0 +1,83 @@
+spring:
+  application:
+    name: Convenia API
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # DataSource — PostgreSQL
+  # Variables: DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+  # If no env var is set, the default value after the colon (:) is used.
+  # ─────────────────────────────────────────────────────────────────────────────
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/${DB_NAME:convenia-stagge-db}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: ConveniaHikariPool
+      maximum-pool-size: 10
+      minimum-idle: 5
+      idle-timeout: 30000
+      connection-timeout: 20000
+      leak-detection-threshold: 60000
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JPA / Hibernate
+  # ddl-auto: validate → Hibernate checks the schema matches entities.
+  # Flyway creates/alters the schema; Hibernate only reads it.
+  # ─────────────────────────────────────────────────────────────────────────────
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        use_sql_comments: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Flyway — Database migrations
+  # Reads SQL files from: src/main/resources/db/migration/
+  # Naming convention: V{major}.{minor}.{patch}__{Description}.sql
+  # ─────────────────────────────────────────────────────────────────────────────
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Thymeleaf — disabled for API-only mode
+  # ─────────────────────────────────────────────────────────────────────────────
+  thymeleaf:
+    check-template-location: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Server
+# ─────────────────────────────────────────────────────────────────────────────
+server:
+  port: ${SERVER_PORT:8080}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Application-specific properties
+# ─────────────────────────────────────────────────────────────────────────────
+app:
+  jwt:
+    # Secret key for signing JWT tokens.
+    # MUST be at least 256 bits (32 chars) for HMAC-SHA-256.
+    # Override in production via APP_JWT_SECRET env variable.
+    secret: ${APP_JWT_SECRET:convenia-secret-key-for-jwt-token-must-be-256-bits!!}
+    # Token expiration in milliseconds. Default: 24 hours (86400000 ms).
+    expiration: ${APP_JWT_EXPIRATION:86400000}
+  cors:
+    # Comma-separated list of allowed frontend origins.
+    allowed-origins: ${APP_ALLOWED_ORIGINS:http://localhost:4200,http://localhost:3000}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Logging
+# ─────────────────────────────────────────────────────────────────────────────
+logging:
+  level:
+    org.hibernate.SQL: DEBUG
+    org.hibernate.orm.jdbc.bind: TRACE
+    org.flywaydb: INFO
+    com.uniremington.api.convenia: INFO
