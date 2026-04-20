@@ -98,8 +98,28 @@ public class Student extends AuditableEntity {
 
         /**
          * Current academic semester (1-based).
-         * Used to validate if the student is eligible for professional practice.
+         * Used as a reference indicator of the student's academic progress.
          */
         @Column(nullable = false)
         private Integer currentSemester;
+
+        /**
+         * Number of credits the student has approved to date.
+         * Compared against {@code AcademicProgram.totalCredits} to determine
+         * eligibility: must be ≥ 80% for PROFESSIONAL programs or ≥ 70% for
+         * TECHNOLOGICAL programs (Resolución 002-2024, Art. §1).
+         */
+        @Column(nullable = false)
+        @Builder.Default
+        private Integer approvedCredits = 0;
+
+        /**
+         * Number of mandatory practice-preparation seminars the student has completed.
+         * Must be at least 2 before an agreement can be submitted for review
+         * (Resolución 002-2024, Art. §1).
+         * Valid range: 0–2.
+         */
+        @Column(nullable = false)
+        @Builder.Default
+        private Integer seminarsCompleted = 0;
 }

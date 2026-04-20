@@ -2,13 +2,17 @@ HELP.md
 bibliokeep-backend-main
 .antigravity/
 MER.mermaid
+documenso
 business_rules.md
 AI-agent-context-project.md
 target/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
-
+test1-error.txt
+test2-error.txt
+test3-error.txt
+normativa_practicas.md
 
 ### STS ###
 .apt_generated

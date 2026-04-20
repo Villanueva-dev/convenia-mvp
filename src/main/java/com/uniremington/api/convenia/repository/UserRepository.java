@@ -1,8 +1,10 @@
 package com.uniremington.api.convenia.repository;
 
 import com.uniremington.api.convenia.model.entity.User;
+import com.uniremington.api.convenia.model.entity.UserRole;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -24,12 +26,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
      */
     Optional<User> findByEmail(String email);
 
-    /**
-     * Checks if a user with the given email already exists.
-     * Used during registration to prevent duplicate accounts.
-     *
-     * @param email the email to check
-     * @return {@code true} if the email is already registered
-     */
     boolean existsByEmail(String email);
+
+    List<User> findByUniversityIdAndRoleOrderByEmailAsc(Long universityId, UserRole role);
 }

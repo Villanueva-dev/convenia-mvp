@@ -56,6 +56,12 @@ public enum AgreementStatus {
     ACTIVE,
 
     /**
+     * The practice has been formally closed by the coordinator.
+     * All parties have signed and the internship period has concluded.
+     */
+    COMPLETED,
+
+    /**
      * The agreement was rejected at any review stage.
      * A {@code rejectionReason} must be provided on the {@link Agreement} entity.
      */
