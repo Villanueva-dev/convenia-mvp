@@ -2,6 +2,8 @@ package com.uniremington.api.convenia.service;
 
 import com.uniremington.api.convenia.model.dto.AuthResponse;
 import com.uniremington.api.convenia.model.dto.LoginRequest;
+import com.uniremington.api.convenia.model.dto.RegisterRequest;
+import com.uniremington.api.convenia.model.entity.UserRole;
 
 /**
  * Contract for authentication operations.
@@ -17,4 +19,10 @@ public interface AuthService {
      *         if the credentials are invalid
      */
     AuthResponse login(LoginRequest request);
+
+    /**
+     * Registers a new user and returns a JWT (same as logging in immediately).
+     * Allowed roles: STUDENT, ACADEMIC_ADVISOR, COMPANY_REP.
+     */
+    AuthResponse register(RegisterRequest request, UserRole role);
 }

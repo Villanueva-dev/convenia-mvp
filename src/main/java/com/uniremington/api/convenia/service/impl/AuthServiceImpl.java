@@ -2,17 +2,28 @@ package com.uniremington.api.convenia.service.impl;
 
 import com.uniremington.api.convenia.model.dto.AuthResponse;
 import com.uniremington.api.convenia.model.dto.LoginRequest;
+import com.uniremington.api.convenia.model.dto.RegisterRequest;
+import com.uniremington.api.convenia.model.entity.Student;
+import com.uniremington.api.convenia.model.entity.University;
+import com.uniremington.api.convenia.model.entity.User;
+import com.uniremington.api.convenia.model.entity.UserRole;
+import com.uniremington.api.convenia.repository.AcademicProgramRepository;
+import com.uniremington.api.convenia.repository.StudentRepository;
+import com.uniremington.api.convenia.repository.UniversityRepository;
 import com.uniremington.api.convenia.repository.UserRepository;
 import com.uniremington.api.convenia.service.AuthService;
 import com.uniremington.api.convenia.service.JwtService;
 import com.uniremington.api.convenia.shared.exception.InvalidCredentialsException;
+import com.uniremington.api.convenia.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -36,9 +47,13 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
 
-    private final AuthenticationManager authenticationManager;
-    private final JwtService jwtService;
-    private final UserRepository userRepository;
+    private final AuthenticationManager    authenticationManager;
+    private final JwtService               jwtService;
+    private final UserRepository           userRepository;
+    private final UniversityRepository     universityRepository;
+    private final AcademicProgramRepository academicProgramRepository;
+    private final StudentRepository        studentRepository;
+    private final PasswordEncoder          passwordEncoder;
 
     /**
      * {@inheritDoc}
@@ -80,5 +95,65 @@ public class AuthServiceImpl implements AuthService {
                 user.getRole().name(),
                 user.getUniversity() != null ? user.getUniversity().getId() : null
         );
+    }
+
+    @Override
+    @Transactional
+    public AuthResponse register(RegisterRequest request, UserRole role) {
+        if (userRepository.existsByEmail(request.email())) {
+            throw new IllegalArgumentException("Email already registered: " + request.email());
+        }
+
+        var university = universityRepository.findById(request.universityId())
+                .orElseThrow(() -> new ResourceNotFoundException("University", request.universityId()));
+
+        var user = userRepository.save(User.builder()
+                .email(request.email())
+                .password(passwordEncoder.encode(request.password()))
+                .role(role)
+                .university(university)
+                .active(true)
+                .build());
+
+        if (role == UserRole.STUDENT) {
+            validateStudentFields(request);
+            var program = academicProgramRepository.findById(request.academicProgramId())
+                    .orElseThrow(() -> new ResourceNotFoundException("AcademicProgram", request.academicProgramId()));
+
+            studentRepository.save(Student.builder()
+                    .user(user)
+                    .university(university)
+                    .academicProgram(program)
+                    .fullName(request.fullName())
+                    .documentNumber(request.documentNumber())
+                    .phoneNumber(request.phoneNumber())
+                    .currentSemester(request.currentSemester())
+                    .build());
+        }
+
+        log.info("User registered: {} with role {}", user.getEmail(), role);
+        return buildAuthResponse(user, university);
+    }
+
+    private void validateStudentFields(RegisterRequest request) {
+        if (request.fullName() == null || request.fullName().isBlank())
+            throw new IllegalArgumentException("fullName is required for STUDENT registration");
+        if (request.documentNumber() == null || request.documentNumber().isBlank())
+            throw new IllegalArgumentException("documentNumber is required for STUDENT registration");
+        if (request.phoneNumber() == null || request.phoneNumber().isBlank())
+            throw new IllegalArgumentException("phoneNumber is required for STUDENT registration");
+        if (request.academicProgramId() == null)
+            throw new IllegalArgumentException("academicProgramId is required for STUDENT registration");
+        if (request.currentSemester() == null)
+            throw new IllegalArgumentException("currentSemester is required for STUDENT registration");
+    }
+
+    private AuthResponse buildAuthResponse(User user, University university) {
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("user-id", user.getId());
+        claims.put("role", user.getRole().name());
+        claims.put("university-id", university.getId());
+        String token = jwtService.generateToken(claims, user.getEmail());
+        return new AuthResponse(token, "Bearer", user.getEmail(), user.getRole().name(), university.getId());
     }
 }
