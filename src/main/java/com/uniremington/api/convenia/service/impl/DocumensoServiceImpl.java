@@ -286,7 +286,7 @@ public class DocumensoServiceImpl implements DocumensoService {
             throw new IllegalStateException("Envelope " + envelopeId + " has no items to download");
         }
 
-        String itemId = envelope.envelopeItems().get(0).id();
+        String itemId = envelope.envelopeItems().getFirst().id();
 
         byte[] pdfBytes = documensoRestClient.get()
                 .uri("/envelope/item/" + itemId + "/download?version=signed")

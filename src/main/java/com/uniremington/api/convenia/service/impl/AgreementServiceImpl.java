@@ -17,7 +17,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.temporal.ChronoUnit;
 import java.util.List;
-import java.util.Objects;
 
 /**
  * Business logic implementation for the professional practice agreement lifecycle.
@@ -54,8 +53,8 @@ public class AgreementServiceImpl implements AgreementService {
         var student = studentRepository.findById(request.studentId())
                 .orElseThrow(() -> new ResourceNotFoundException("Student", request.studentId()));
 
-        assertUniversityMatch(student.getUniversity().getId(), currentUser,
-                "Student does not belong to your university");
+        assertUniversityMatch(student.getUniversity().getId(), currentUser
+        );
 
         if ("STUDENT".equals(currentUser.getRole()) &&
                 !student.getUser().getId().equals(currentUser.getUserId())) {
@@ -274,7 +273,7 @@ public class AgreementServiceImpl implements AgreementService {
      */
     @Override
     @Transactional
-    public AgreementResponse activateAgreement(String documensoDocumentId) {
+    public void activateAgreement(String documensoDocumentId) {
         var agreement = agreementRepository.findByDocumensoDocumentId(documensoDocumentId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "No agreement found for Documenso envelope id: " + documensoDocumentId));
@@ -282,7 +281,8 @@ public class AgreementServiceImpl implements AgreementService {
         if (agreement.getStatus() != AgreementStatus.PENDING_SIGNATURE) {
             log.warn("Received DOCUMENT_COMPLETED for agreement id={} but status is {} — ignoring",
                     agreement.getId(), agreement.getStatus());
-            return agreementMapper.toResponse(agreement);
+            agreementMapper.toResponse(agreement);
+            return;
         }
 
         agreement.setStatus(AgreementStatus.ACTIVE);
@@ -290,7 +290,7 @@ public class AgreementServiceImpl implements AgreementService {
         recordStatusChange(saved, AgreementStatus.PENDING_SIGNATURE, AgreementStatus.ACTIVE, null,
                 "Activated by Documenso webhook — all parties signed");
         log.info("Agreement id={} activated after all signatures completed", agreement.getId());
-        return agreementMapper.toResponse(saved);
+        agreementMapper.toResponse(saved);
     }
 
     @Override
@@ -339,9 +339,9 @@ public class AgreementServiceImpl implements AgreementService {
         }
     }
 
-    private void assertUniversityMatch(Long entityUniversityId, JwtUser user, String message) {
+    private void assertUniversityMatch(Long entityUniversityId, JwtUser user) {
         if (user.getUniversityId() != null && !user.getUniversityId().equals(entityUniversityId)) {
-            throw new AccessDeniedException(message);
+            throw new AccessDeniedException("Student does not belong to your university");
         }
     }
 

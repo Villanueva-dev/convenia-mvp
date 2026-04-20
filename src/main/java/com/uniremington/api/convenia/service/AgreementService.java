@@ -137,10 +137,9 @@ public interface AgreementService {
      * {@code GET /envelope/download-item} using the stored {@code documensoDocumentId}.</p>
      *
      * @param documensoDocumentId The Documenso envelope ID from the webhook payload.
-     * @return The updated agreement in ACTIVE status.
      * @throws com.uniremington.api.convenia.shared.exception.ResourceNotFoundException if no agreement matches the document ID.
      */
-    AgreementResponse activateAgreement(String documensoDocumentId);
+    void activateAgreement(String documensoDocumentId);
 
     /**
      * Formally closes an ACTIVE agreement (ACTIVE → COMPLETED).
