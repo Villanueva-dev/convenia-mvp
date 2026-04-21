@@ -26,6 +26,13 @@ public enum UserRole {
     ADMIN,
 
     /**
+     * Administrative secretary of the faculty.
+     * Supports the coordinator with administrative tasks related to
+     * practice agreements (document reception, scheduling, notifications).
+     */
+    SECRETARY,
+
+    /**
      * Practice coordinator ("Docente Coordinador de Prácticas").
      * Belongs to the university. Plans, coordinates and approves agreements.
      * Administers the information system and handles the full agreement lifecycle.
@@ -41,11 +48,13 @@ public enum UserRole {
     ACADEMIC_ADVISOR,
 
     /**
-     * Company representative ("Tutor / Co-formador").
-     * The person at the host company responsible for guiding the intern
-     * on a day-to-day basis. Assigns the other 50% of the final grade.
+     * Company tutor ("Tutor / Co-formador") designated by the host company.
+     * Guides the intern on a day-to-day basis and assigns 50% of the final grade.
+     * Distinct from the company's legal representative who signs the agreement PDF.
+     *
+     * @see com.uniremington.api.convenia.model.entity.Company#getRepresentativeName()
      */
-    COMPANY_REP,
+    COMPANY_TUTOR,
 
     /**
      * Student ("Practicante / Pasante").

@@ -4,6 +4,7 @@ import com.uniremington.api.convenia.model.dto.*;
 import com.uniremington.api.convenia.model.vo.JwtUser;
 import com.uniremington.api.convenia.service.AgreementService;
 import com.uniremington.api.convenia.service.DocumensoService;
+import com.uniremington.api.convenia.service.VisitService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -19,7 +20,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.util.List;
 
 /**
@@ -38,6 +41,7 @@ public class AgreementController {
 
     private final AgreementService agreementService;
     private final DocumensoService  documensoService;
+    private final VisitService      visitService;
 
     // ── CRUD ──────────────────────────────────────────────────────────────────
 
@@ -231,6 +235,61 @@ public class AgreementController {
             @AuthenticationPrincipal JwtUser currentUser) {
 
         return ResponseEntity.ok(agreementService.completeAgreement(id, currentUser));
+    }
+
+    // ── Visits ────────────────────────────────────────────────────────────────
+
+    @Operation(summary = "List visits", description = "Returns all advisor visits for an agreement")
+    @ApiResponse(responseCode = "200", description = "Visits listed")
+    @GetMapping("/{id}/visits")
+    @PreAuthorize("hasAnyRole('COORDINATOR', 'ACADEMIC_ADVISOR', 'ADMIN')")
+    public ResponseEntity<List<VisitResponse>> listVisits(
+            @PathVariable Long id,
+            @AuthenticationPrincipal JwtUser currentUser) {
+
+        return ResponseEntity.ok(visitService.listVisits(id, currentUser));
+    }
+
+    @Operation(summary = "Register visit", description = "Records a new advisor visit for an ACTIVE agreement")
+    @ApiResponse(responseCode = "201", description = "Visit registered")
+    @PostMapping("/{id}/visits")
+    @PreAuthorize("hasRole('ACADEMIC_ADVISOR')")
+    public ResponseEntity<VisitResponse> registerVisit(
+            @PathVariable Long id,
+            @Valid @RequestBody CreateVisitRequest request,
+            @AuthenticationPrincipal JwtUser currentUser) {
+
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(visitService.registerVisit(id, request, currentUser));
+    }
+
+    // ── Grading ───────────────────────────────────────────────────────────────
+
+    @Operation(summary = "Submit grade", description = "Submits the advisor or tutor grade (0.0–5.0) for an ACTIVE agreement")
+    @ApiResponse(responseCode = "200", description = "Grade recorded")
+    @PutMapping("/{id}/grade")
+    @PreAuthorize("hasAnyRole('ACADEMIC_ADVISOR', 'COMPANY_TUTOR')")
+    public ResponseEntity<AgreementResponse> gradeAgreement(
+            @PathVariable Long id,
+            @Valid @RequestBody GradeRequest request,
+            @AuthenticationPrincipal JwtUser currentUser) {
+
+        return ResponseEntity.ok(agreementService.gradeAgreement(id, request, currentUser));
+    }
+
+    // ── Document upload ───────────────────────────────────────────────────────
+
+    @Operation(summary = "Upload document", description = "Uploads a student document to Cloudflare R2")
+    @ApiResponse(responseCode = "200", description = "Document uploaded")
+    @PostMapping(value = "/{id}/documents/{type}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasRole('STUDENT')")
+    public ResponseEntity<AgreementResponse> uploadDocument(
+            @PathVariable Long id,
+            @PathVariable DocumentType type,
+            @RequestParam("file") MultipartFile file,
+            @AuthenticationPrincipal JwtUser currentUser) throws IOException {
+
+        return ResponseEntity.ok(agreementService.uploadDocument(id, type, file, currentUser));
     }
 
     @Operation(summary = "Download signed document",

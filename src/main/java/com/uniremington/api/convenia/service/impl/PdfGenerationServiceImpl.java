@@ -70,6 +70,7 @@ public class PdfGenerationServiceImpl implements PdfGenerationService {
         ctx.setVariable("universityName",     agreement.getUniversity().getName());
         ctx.setVariable("programName",        agreement.getStudent().getAcademicProgram().getName());
         ctx.setVariable("practiceModality",   agreement.getPracticeModality().name());
+        ctx.setVariable("practiceComponent",  agreement.getPracticeComponent().name());
         ctx.setVariable("contractType",       agreement.getContractType().name());
         ctx.setVariable("weeklyHours",        agreement.getWeeklyHours());
         ctx.setVariable("monthlyStipend",     agreement.getMonthlyStipend());

@@ -31,6 +31,7 @@ public interface AgreementMapper {
     @Mapping(target = "companyRepId",         expression = "java(agreement.getCompanyRep() != null ? agreement.getCompanyRep().getId() : null)")
     @Mapping(target = "companyRepEmail",      expression = "java(agreement.getCompanyRep() != null ? agreement.getCompanyRep().getEmail() : null)")
     @Mapping(target = "practiceModality",     expression = "java(agreement.getPracticeModality().name())")
+    @Mapping(target = "practiceComponent",    expression = "java(agreement.getPracticeComponent().name())")
     @Mapping(target = "contractType",         expression = "java(agreement.getContractType().name())")
     @Mapping(target = "status",               expression = "java(agreement.getStatus().name())")
     AgreementResponse toResponse(Agreement agreement);

@@ -1,6 +1,7 @@
 package com.uniremington.api.convenia.model.dto;
 
 import com.uniremington.api.convenia.model.entity.ContractType;
+import com.uniremington.api.convenia.model.entity.PracticeComponent;
 import com.uniremington.api.convenia.model.entity.PracticeModality;
 import jakarta.validation.constraints.*;
 
@@ -14,7 +15,8 @@ import java.time.LocalDate;
  * @param companyId         Unique identifier of the host company.
  * @param academicAdvisorId Optional — user ID of the academic advisor (required before submission).
  * @param companyRepId      Optional — user ID of the company representative (required before submission).
- * @param practiceModality  Modality of the practice (PROFESSIONAL, SOCIAL, RESEARCH, INTERNATIONAL).
+ * @param practiceModality  Practice modality (PROFESSIONAL, SOCIAL, RESEARCH, INTERNATIONAL).
+ * @param practiceComponent Practice component (ACADEMIC, SOCIAL, MANAGEMENT).
  * @param contractType      Contract type (EMPLOYMENT, APPRENTICESHIP, INTERNSHIP_AGREEMENT, FRAMEWORK_AGREEMENT).
  * @param startDate         Start date of the practice period (ISO-8601).
  * @param endDate           End date — min 4 months from start, max 12; fixed 6 for APPRENTICESHIP.
@@ -35,6 +37,9 @@ public record CreateAgreementRequest(
 
         @NotNull(message = "Practice modality is required")
         PracticeModality practiceModality,
+
+        @NotNull(message = "Practice component is required")
+        PracticeComponent practiceComponent,
 
         @NotNull(message = "Contract type is required")
         ContractType contractType,

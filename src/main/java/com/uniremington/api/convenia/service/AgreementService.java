@@ -2,7 +2,9 @@ package com.uniremington.api.convenia.service;
 
 import com.uniremington.api.convenia.model.dto.*;
 import com.uniremington.api.convenia.model.vo.JwtUser;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.util.List;
 
 /**
@@ -150,4 +152,30 @@ public interface AgreementService {
      * @throws IllegalStateException if the agreement is not in ACTIVE status.
      */
     AgreementResponse completeAgreement(Long id, JwtUser currentUser);
+
+    /**
+     * Submits a grade (0.0–5.0) for an ACTIVE agreement.
+     *
+     * <p>ACADEMIC_ADVISOR sets {@code advisorGrade}; COMPANY_TUTOR sets {@code companyGrade}.
+     * When both grades are present the service computes {@code finalGrade = (a + c) / 2}.</p>
+     *
+     * @param id          Agreement unique identifier.
+     * @param request     Grade value.
+     * @param currentUser Must be the assigned advisor or company tutor.
+     * @return Updated agreement.
+     */
+    AgreementResponse gradeAgreement(Long id, GradeRequest request, JwtUser currentUser);
+
+    /**
+     * Uploads a student document to Cloudflare R2 and stores the file key on the agreement.
+     *
+     * @param id          Agreement unique identifier.
+     * @param type        Document type determining which field is updated.
+     * @param file        Uploaded file.
+     * @param currentUser Must be the student who owns the agreement.
+     * @return Updated agreement.
+     * @throws IOException if reading the file bytes fails.
+     */
+    AgreementResponse uploadDocument(Long id, DocumentType type, MultipartFile file, JwtUser currentUser)
+            throws IOException;
 }

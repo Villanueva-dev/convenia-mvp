@@ -22,7 +22,7 @@ public interface AuthService {
 
     /**
      * Registers a new user and returns a JWT (same as logging in immediately).
-     * Allowed roles: STUDENT, ACADEMIC_ADVISOR, COMPANY_REP.
+     * Allowed roles: STUDENT, ACADEMIC_ADVISOR, COMPANY_TUTOR.
      */
     AuthResponse register(RegisterRequest request, UserRole role);
 }

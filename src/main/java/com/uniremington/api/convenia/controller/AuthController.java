@@ -64,10 +64,10 @@ public class AuthController {
                 .body(authService.register(request, UserRole.ACADEMIC_ADVISOR));
     }
 
-    @PostMapping("/register/company-rep")
-    public ResponseEntity<AuthResponse> registerCompanyRep(@RequestBody @Valid RegisterRequest request) {
+    @PostMapping("/register/company-tutor")
+    public ResponseEntity<AuthResponse> registerCompanyTutor(@RequestBody @Valid RegisterRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(authService.register(request, UserRole.COMPANY_REP));
+                .body(authService.register(request, UserRole.COMPANY_TUTOR));
     }
 
     @GetMapping("/programs/{universityId}")

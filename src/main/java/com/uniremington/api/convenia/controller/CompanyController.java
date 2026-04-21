@@ -2,6 +2,7 @@ package com.uniremington.api.convenia.controller;
 
 import com.uniremington.api.convenia.model.dto.CompanyResponse;
 import com.uniremington.api.convenia.model.dto.CreateCompanyRequest;
+import com.uniremington.api.convenia.model.dto.UpdateCompanyRequest;
 import com.uniremington.api.convenia.model.entity.Company;
 import com.uniremington.api.convenia.model.entity.University;
 import com.uniremington.api.convenia.model.vo.JwtUser;
@@ -57,5 +58,31 @@ public class CompanyController {
 
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(CompanyResponse.from(companyRepository.save(company)));
+    }
+
+    @PutMapping("/{id}")
+    @PreAuthorize("hasAnyRole('COORDINATOR', 'ADMIN')")
+    public ResponseEntity<CompanyResponse> updateCompany(
+            @PathVariable Long id,
+            @Valid @RequestBody UpdateCompanyRequest request,
+            @AuthenticationPrincipal JwtUser currentUser) {
+
+        var company = "ADMIN".equals(currentUser.getRole()) && currentUser.getUniversityId() == null
+                ? companyRepository.findById(id)
+                        .orElseThrow(() -> new com.uniremington.api.convenia.shared.exception.ResourceNotFoundException("Company", id))
+                : companyRepository.findByIdAndUniversityId(id, currentUser.getUniversityId())
+                        .orElseThrow(() -> new com.uniremington.api.convenia.shared.exception.ResourceNotFoundException("Company", id));
+
+        if (request.legalName() != null && !request.legalName().isBlank()) {
+            company.setLegalName(request.legalName());
+        }
+        if (request.representativeName() != null && !request.representativeName().isBlank()) {
+            company.setRepresentativeName(request.representativeName());
+        }
+        if (request.representativeEmail() != null && !request.representativeEmail().isBlank()) {
+            company.setRepresentativeEmail(request.representativeEmail());
+        }
+
+        return ResponseEntity.ok(CompanyResponse.from(companyRepository.save(company)));
     }
 }

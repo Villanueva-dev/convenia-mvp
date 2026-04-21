@@ -8,15 +8,21 @@ import com.uniremington.api.convenia.repository.*;
 import com.uniremington.api.convenia.service.AgreementService;
 import com.uniremington.api.convenia.service.DocumensoService;
 import com.uniremington.api.convenia.service.PdfGenerationService;
+import com.uniremington.api.convenia.service.StorageService;
 import com.uniremington.api.convenia.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Business logic implementation for the professional practice agreement lifecycle.
@@ -38,6 +44,7 @@ public class AgreementServiceImpl implements AgreementService {
     private final AgreementMapper                   agreementMapper;
     private final PdfGenerationService              pdfGenerationService;
     private final DocumensoService                  documensoService;
+    private final StorageService                    storageService;
 
     // ── CRUD ──────────────────────────────────────────────────────────────────
 
@@ -71,6 +78,7 @@ public class AgreementServiceImpl implements AgreementService {
                 .student(student)
                 .company(company)
                 .practiceModality(request.practiceModality())
+                .practiceComponent(request.practiceComponent())
                 .contractType(request.contractType())
                 .startDate(request.startDate())
                 .endDate(request.endDate())
@@ -148,6 +156,7 @@ public class AgreementServiceImpl implements AgreementService {
             agreement.setCompanyRep(loadUser(request.companyRepId()));
         }
         if (request.practiceModality() != null)  agreement.setPracticeModality(request.practiceModality());
+        if (request.practiceComponent() != null) agreement.setPracticeComponent(request.practiceComponent());
         if (request.contractType() != null)       agreement.setContractType(request.contractType());
         if (request.startDate() != null)          agreement.setStartDate(request.startDate());
         if (request.endDate() != null)            agreement.setEndDate(request.endDate());
@@ -305,6 +314,89 @@ public class AgreementServiceImpl implements AgreementService {
         recordStatusChange(saved, AgreementStatus.ACTIVE, AgreementStatus.COMPLETED, currentUser.getUserId(), null);
         log.info("Agreement id={} completed by user={}", id, currentUser.getUserId());
         return agreementMapper.toResponse(saved);
+    }
+
+    // ── Grade submission ──────────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public AgreementResponse gradeAgreement(Long id, GradeRequest request, JwtUser currentUser) {
+        var agreement = loadAgreement(id);
+        assertTenantAccess(agreement, currentUser);
+        assertStatus(agreement, AgreementStatus.ACTIVE, "Only ACTIVE agreements can be graded");
+
+        switch (currentUser.getRole()) {
+            case "ACADEMIC_ADVISOR" -> {
+                if (!agreement.getAcademicAdvisor().getId().equals(currentUser.getUserId())) {
+                    throw new AccessDeniedException("You are not the assigned academic advisor");
+                }
+                if (agreement.getAdvisorGrade() != null) {
+                    throw new IllegalStateException("Advisor grade has already been submitted");
+                }
+                agreement.setAdvisorGrade(request.grade());
+            }
+            case "COMPANY_TUTOR" -> {
+                if (!agreement.getCompanyRep().getId().equals(currentUser.getUserId())) {
+                    throw new AccessDeniedException("You are not the assigned company tutor");
+                }
+                if (agreement.getCompanyGrade() != null) {
+                    throw new IllegalStateException("Company grade has already been submitted");
+                }
+                agreement.setCompanyGrade(request.grade());
+            }
+            default -> throw new AccessDeniedException("Only ACADEMIC_ADVISOR or COMPANY_TUTOR can grade agreements");
+        }
+
+        if (agreement.getAdvisorGrade() != null && agreement.getCompanyGrade() != null) {
+            agreement.setFinalGrade(
+                    agreement.getAdvisorGrade()
+                            .add(agreement.getCompanyGrade())
+                            .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP));
+        }
+
+        return agreementMapper.toResponse(agreementRepository.save(agreement));
+    }
+
+    // ── Document upload ───────────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public AgreementResponse uploadDocument(Long id, DocumentType type, MultipartFile file,
+                                            JwtUser currentUser) throws IOException {
+        var agreement = loadAgreement(id);
+        assertTenantAccess(agreement, currentUser);
+        assertOwnershipIfStudent(agreement, currentUser);
+
+        if (type == DocumentType.CV) {
+            if (agreement.getStatus() != AgreementStatus.DRAFT &&
+                    agreement.getStatus() != AgreementStatus.ADMIN_REVIEW &&
+                    agreement.getStatus() != AgreementStatus.COORDINATION_REVIEW) {
+                throw new IllegalStateException(
+                        "CV can only be uploaded while the agreement is in DRAFT, ADMIN_REVIEW, or COORDINATION_REVIEW");
+            }
+        } else {
+            assertStatus(agreement, AgreementStatus.ACTIVE,
+                    "Documents other than CV can only be uploaded for ACTIVE agreements");
+        }
+
+        String ext = "";
+        String originalName = file.getOriginalFilename();
+        if (originalName != null && originalName.contains(".")) {
+            ext = originalName.substring(originalName.lastIndexOf('.'));
+        }
+        String key = "agreements/" + id + "/" + type.name().toLowerCase() + "/" + UUID.randomUUID() + ext;
+        storageService.upload(key, file.getContentType(), file.getBytes());
+
+        switch (type) {
+            case CV          -> agreement.setCvFileKey(key);
+            case CONTRACT    -> agreement.setContractFileKey(key);
+            case NATIONAL_ID -> agreement.setNationalIdFileKey(key);
+            case EPS         -> agreement.setEpsFileKey(key);
+            case ARL         -> agreement.setArlFileKey(key);
+            case WORK_PLAN   -> agreement.setWorkPlanFileKey(key);
+        }
+
+        return agreementMapper.toResponse(agreementRepository.save(agreement));
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

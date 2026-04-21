@@ -17,7 +17,8 @@ import java.time.LocalDateTime;
  * @param academicAdvisorEmail Academic advisor email (nullable until assigned).
  * @param companyRepId         Company representative user ID (nullable until assigned).
  * @param companyRepEmail      Company representative email (nullable until assigned).
- * @param practiceModality     Practice modality name (e.g., "PROFESSIONAL").
+ * @param practiceModality     Practice modality (e.g., "PROFESSIONAL", "SOCIAL", "RESEARCH", "INTERNATIONAL").
+ * @param practiceComponent    Practice component (e.g., "ACADEMIC", "SOCIAL", "MANAGEMENT").
  * @param contractType         Contract type name (e.g., "APPRENTICESHIP").
  * @param startDate            Practice start date.
  * @param endDate              Practice end date.
@@ -45,6 +46,7 @@ public record AgreementResponse(
         Long companyRepId,
         String companyRepEmail,
         String practiceModality,
+        String practiceComponent,
         String contractType,
         LocalDate startDate,
         LocalDate endDate,

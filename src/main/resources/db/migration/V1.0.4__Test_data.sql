@@ -1,6 +1,6 @@
 -- =============================================================================
 -- V1.0.4 — Test data for end-to-end Documenso integration testing
--- Creates: ACADEMIC_ADVISOR, COMPANY_REP, STUDENT users + company + student.
+-- Creates: ACADEMIC_ADVISOR, COMPANY_TUTOR, STUDENT users + company + student.
 -- Gmail + aliases so all signing invitations arrive at the same inbox.
 -- =============================================================================
 
@@ -13,7 +13,7 @@ INSERT INTO users (email, password, role, university_id, active, created_at, upd
 
     ('julianvilla07021+rep@gmail.com',
      crypt('Test1234!', gen_salt('bf', 10)),
-     'COMPANY_REP', 1, true, now(), now()),
+     'COMPANY_TUTOR', 1, true, now(), now()),
 
     ('julianvilla07021+student@gmail.com',
      crypt('Test1234!', gen_salt('bf', 10)),

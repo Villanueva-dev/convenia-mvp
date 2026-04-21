@@ -35,7 +35,7 @@ import java.time.LocalDate;
  * (a {@code User} with role {@code ACADEMIC_ADVISOR}) who monitors the
  * student, conducts site visits, and grades 50% of the final score.</li>
  * <li><strong>Company</strong>, represented by a {@code companyRep}
- * (a {@code User} with role {@code COMPANY_REP}) who guides the intern
+ * (a {@code User} with role {@code COMPANY_TUTOR}) who guides the intern
  * daily and grades the other 50% of the final score.</li>
  * </ol>
  *
@@ -105,7 +105,7 @@ public class Agreement extends AuditableEntity {
 
     /**
      * The company representative ("Tutor / Co-formador") at the host company.
-     * Must hold the {@code COMPANY_REP} role.
+     * Must hold the {@code COMPANY_TUTOR} role.
      *
      * <p>
      * Responsibilities: guide the intern on a day-to-day basis and
@@ -119,14 +119,21 @@ public class Agreement extends AuditableEntity {
     // ── Agreement configuration ───────────────────────────────────────────────
 
     /**
-     * The modality of the professional practice (e.g., PROFESSIONAL, SOCIAL).
+     * The modality of the professional practice (PROFESSIONAL, SOCIAL, RESEARCH, INTERNATIONAL).
      * Cannot be changed once the agreement leaves {@link AgreementStatus#DRAFT}.
-     *
-     * @see PracticeModality
      */
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private PracticeModality practiceModality;
+
+    /**
+     * The academic component of the practice (ACADEMIC, SOCIAL, MANAGEMENT).
+     * Describes the nature and purpose of the student's activities.
+     * Cannot be changed once the agreement leaves {@link AgreementStatus#DRAFT}.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private PracticeComponent practiceComponent;
 
     /**
      * The legal contract type binding the student to the company.

@@ -42,7 +42,7 @@ CREATE INDEX idx_program_university ON academic_programs (university_id);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- users  (authentication identity — one row per login account)
--- UserRole enum values: ADMIN, COORDINATOR, ACADEMIC_ADVISOR, COMPANY_REP, STUDENT
+-- UserRole enum values: ADMIN, SECRETARY, COORDINATOR, ACADEMIC_ADVISOR, COMPANY_TUTOR, STUDENT
 -- university_id is NULL only for ADMIN users (platform-level).
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE users (
@@ -50,7 +50,7 @@ CREATE TABLE users (
     email         VARCHAR(255)   NOT NULL UNIQUE,
     password      VARCHAR(255)   NOT NULL,
     role          VARCHAR(50)    NOT NULL
-                      CHECK (role IN ('ADMIN', 'COORDINATOR', 'ACADEMIC_ADVISOR', 'COMPANY_REP', 'STUDENT')),
+                      CHECK (role IN ('ADMIN', 'SECRETARY', 'COORDINATOR', 'ACADEMIC_ADVISOR', 'COMPANY_TUTOR', 'STUDENT')),
     university_id BIGINT,
     active        BOOLEAN        NOT NULL DEFAULT true,
     created_at    TIMESTAMP      NOT NULL,
@@ -135,6 +135,8 @@ CREATE TABLE agreements (
     -- Configuration
     practice_modality       VARCHAR(50)     NOT NULL
                                 CHECK (practice_modality IN ('PROFESSIONAL', 'SOCIAL', 'RESEARCH', 'INTERNATIONAL')),
+    practice_component      VARCHAR(50)     NOT NULL
+                                CHECK (practice_component IN ('ACADEMIC', 'SOCIAL', 'MANAGEMENT')),
     contract_type           VARCHAR(50)     NOT NULL
                                 CHECK (contract_type IN ('EMPLOYMENT', 'APPRENTICESHIP', 'INTERNSHIP_AGREEMENT', 'FRAMEWORK_AGREEMENT')),
     start_date              DATE            NOT NULL,
