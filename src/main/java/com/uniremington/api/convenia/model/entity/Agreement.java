@@ -234,6 +234,24 @@ public class Agreement extends AuditableEntity {
      */
     private String workPlanFileKey;
 
+    /**
+     * S3/R2 file key for the company's NIT certificate.
+     * Uploaded by the company tutor during DRAFT stage.
+     */
+    private String nitFileKey;
+
+    /**
+     * S3/R2 file key for the company's RUT document.
+     * Uploaded by the company tutor during DRAFT stage.
+     */
+    private String rutFileKey;
+
+    /**
+     * S3/R2 file key for the company's Cámara de Comercio certificate.
+     * Uploaded by the company tutor during DRAFT stage.
+     */
+    private String camaraComercioFileKey;
+
     // ── Documenso integration ─────────────────────────────────────────────────
 
     /**

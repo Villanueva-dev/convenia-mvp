@@ -178,7 +178,7 @@ public class AgreementController {
     @Operation(summary = "Approve admin review", description = "Transitions ADMIN_REVIEW → COORDINATION_REVIEW")
     @ApiResponse(responseCode = "200", description = "Agreement advanced to coordination review")
     @PostMapping("/{id}/approve")
-    @PreAuthorize("hasAnyRole('COORDINATOR', 'ADMIN')")
+    @PreAuthorize("hasAnyRole('SECRETARY', 'COORDINATOR', 'ADMIN')")
     public ResponseEntity<AgreementResponse> approveAdminReview(
             @PathVariable Long id,
             @AuthenticationPrincipal JwtUser currentUser) {
@@ -194,10 +194,11 @@ public class AgreementController {
      * @param currentUser The authenticated user (must be COORDINATOR or ADMIN).
      * @return 200 OK with the updated agreement in REJECTED status.
      */
-    @Operation(summary = "Reject agreement", description = "Rejects an agreement at ADMIN_REVIEW or COORDINATION_REVIEW")
-    @ApiResponse(responseCode = "200", description = "Agreement rejected")
+    @Operation(summary = "Reject agreement",
+            description = "ADMIN_REVIEW → returns to DRAFT for corrections. COORDINATION_REVIEW → terminal REJECTED.")
+    @ApiResponse(responseCode = "200", description = "Agreement rejected or returned to DRAFT")
     @PostMapping("/{id}/reject")
-    @PreAuthorize("hasAnyRole('COORDINATOR', 'ADMIN')")
+    @PreAuthorize("hasAnyRole('SECRETARY', 'COORDINATOR', 'ADMIN')")
     public ResponseEntity<AgreementResponse> rejectAgreement(
             @PathVariable Long id,
             @Valid @RequestBody RejectAgreementRequest request,
@@ -226,15 +227,16 @@ public class AgreementController {
         return ResponseEntity.ok(agreementService.endorseAgreement(id, currentUser));
     }
 
-    @Operation(summary = "Complete agreement", description = "Formally closes an ACTIVE agreement (ACTIVE → COMPLETED)")
-    @ApiResponse(responseCode = "200", description = "Agreement completed")
-    @PostMapping("/{id}/complete")
+    @Operation(summary = "Start evaluation",
+            description = "Transitions ACTIVE → EVALUATION. Opens the grading phase for advisor and company tutor.")
+    @ApiResponse(responseCode = "200", description = "Agreement moved to evaluation phase")
+    @PostMapping("/{id}/start-evaluation")
     @PreAuthorize("hasAnyRole('COORDINATOR', 'ADMIN')")
-    public ResponseEntity<AgreementResponse> completeAgreement(
+    public ResponseEntity<AgreementResponse> startEvaluation(
             @PathVariable Long id,
             @AuthenticationPrincipal JwtUser currentUser) {
 
-        return ResponseEntity.ok(agreementService.completeAgreement(id, currentUser));
+        return ResponseEntity.ok(agreementService.startEvaluation(id, currentUser));
     }
 
     // ── Visits ────────────────────────────────────────────────────────────────
@@ -265,7 +267,7 @@ public class AgreementController {
 
     // ── Grading ───────────────────────────────────────────────────────────────
 
-    @Operation(summary = "Submit grade", description = "Submits the advisor or tutor grade (0.0–5.0) for an ACTIVE agreement")
+    @Operation(summary = "Submit grade", description = "Submits the advisor or tutor grade (0.0–5.0) for an agreement in EVALUATION. Auto-transitions to FINISHED when both grades are submitted.")
     @ApiResponse(responseCode = "200", description = "Grade recorded")
     @PutMapping("/{id}/grade")
     @PreAuthorize("hasAnyRole('ACADEMIC_ADVISOR', 'COMPANY_TUTOR')")
@@ -279,10 +281,11 @@ public class AgreementController {
 
     // ── Document upload ───────────────────────────────────────────────────────
 
-    @Operation(summary = "Upload document", description = "Uploads a student document to Cloudflare R2")
+    @Operation(summary = "Upload document",
+            description = "Uploads a document to Cloudflare R2. STUDENT uploads CV (DRAFT) and CONTRACT/NATIONAL_ID/EPS/ARL/WORK_PLAN (PENDING_SIGNATURE). COMPANY_TUTOR uploads NIT/RUT/CAMARA_COMERCIO (DRAFT).")
     @ApiResponse(responseCode = "200", description = "Document uploaded")
     @PostMapping(value = "/{id}/documents/{type}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @PreAuthorize("hasRole('STUDENT')")
+    @PreAuthorize("hasAnyRole('STUDENT', 'COMPANY_TUTOR')")
     public ResponseEntity<AgreementResponse> uploadDocument(
             @PathVariable Long id,
             @PathVariable DocumentType type,

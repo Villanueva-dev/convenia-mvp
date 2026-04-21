@@ -1,5 +1,220 @@
 # Convenia API — Changelog
 
+## [0.4.0] — 2026-04-21
+
+### Contexto
+Revisión de la máquina de estados para alinearla con la Resolución CF No. 002 de 2024. Se corrigen los estados terminales, las ventanas de carga de documentos, el comportamiento del rechazo administrativo y los actores que intervienen en cada fase.
+
+---
+
+### Máquina de estados revisada
+
+**Por qué:** El estado `COMPLETED` no reflejaba correctamente el flujo normativo. La evaluación final es una fase diferenciada con sus propias reglas de negocio, y el cierre del convenio (`FINISHED`) sólo debe ocurrir cuando ambas calificaciones han sido registradas.
+
+**Flujo actualizado:**
+```
+DRAFT → ADMIN_REVIEW → COORDINATION_REVIEW → PENDING_SIGNATURE → ACTIVE → EVALUATION → FINISHED
+              ↓                    ↓
+          (vuelve a DRAFT)     REJECTED (terminal)
+```
+
+**Archivos modificados:**
+- `model/entity/AgreementStatus.java` — reemplaza `COMPLETED` con `EVALUATION` y `FINISHED`; javadoc actualizado con el nuevo diagrama
+- `service/AgreementService.java` — `completeAgreement()` renombrado a `startEvaluation()` (ACTIVE → EVALUATION)
+- `service/impl/AgreementServiceImpl.java` — implementación de `startEvaluation()`; `gradeAgreement()` ahora valida estado `EVALUATION` y auto-transiciona a `FINISHED` cuando ambas notas están presentes
+- `controller/AgreementController.java` — endpoint `POST .../complete` reemplazado por `POST .../start-evaluation`
+
+**Archivo nuevo:**
+- `db/migration/V1.0.5__State_machine_revision.sql` — actualiza el CHECK constraint de `status` y agrega columnas de documentos de empresa
+
+---
+
+### Rechazo administrativo no terminal
+
+**Por qué:** La secretaría académica debe poder devolver el convenio al estudiante para correcciones sin cerrarlo definitivamente. Solo el rechazo en coordinación es terminal.
+
+**Regla:**
+- `ADMIN_REVIEW` → rechazar: el convenio vuelve a `DRAFT` con `rejectionReason` visible al estudiante. Se limpia al reenviar.
+- `COORDINATION_REVIEW` → rechazar: estado terminal `REJECTED`.
+
+**Archivos modificados:**
+- `service/impl/AgreementServiceImpl.java` — `rejectAgreement()` diferencia por estado anterior; `submitForReview()` limpia `rejectionReason` al reenviar
+- `controller/AgreementController.java` — rol `SECRETARY` añadido a `@PreAuthorize` de `/approve` y `/reject`
+
+---
+
+### Ventanas de carga de documentos corregidas
+
+**Por qué:** El reglamento establece momentos precisos para cada documento: los soportes legales se presentan al iniciar la solicitud (DRAFT), y los documentos de afiliación se entregan en el primer mes de práctica (PENDING_SIGNATURE).
+
+**Ventanas actualizadas:**
+
+| Documento | Estado permitido | Actor |
+|-----------|-----------------|-------|
+| `CV` | `DRAFT` | `STUDENT` |
+| `NIT`, `RUT`, `CAMARA_COMERCIO` | `DRAFT` | `COMPANY_TUTOR` |
+| `CONTRACT`, `NATIONAL_ID`, `EPS`, `ARL`, `WORK_PLAN` | `PENDING_SIGNATURE` | `STUDENT` |
+
+**Archivos modificados:**
+- `model/dto/DocumentType.java` — añade `NIT`, `RUT`, `CAMARA_COMERCIO`
+- `model/entity/Agreement.java` — añade campos `nitFileKey`, `rutFileKey`, `camaraComercioFileKey`
+- `model/dto/AgreementResponse.java` — expone los 9 campos de documentos (los 6 originales + los 3 nuevos de empresa; antes no estaban en la respuesta)
+- `service/impl/AgreementServiceImpl.java` — `uploadDocument()` aplica las nuevas ventanas y valida el rol por tipo de documento
+- `controller/AgreementController.java` — rol `COMPANY_TUTOR` añadido al `@PreAuthorize` del endpoint de carga
+
+---
+
+### Tests unitarios actualizados
+
+**Por qué:** Los tests existentes referenciaban estados y comportamientos que cambiaron en esta versión.
+
+**Cambios:**
+- `GradeAgreement` — los tests positivos usan estado `EVALUATION`; el test `computesFinalGrade` verifica la auto-transición a `FINISHED`
+- `CompleteAgreement` → renombrado a `StartEvaluation`; verifica transición ACTIVE → EVALUATION
+- `RejectAgreement` — separado en dos tests: `adminReviewRejectionReturnsAgreementToDraft` y `coordinationReviewRejectionIsTerminal`
+- `TestFixtures.dummyAgreementResponse()` — actualizado al nuevo constructor del record (35 parámetros)
+
+**Total: 38 tests, 0 fallos.**
+
+---
+
+## [0.3.0] — 2026-04-21
+
+### Contexto
+Completa las 8 áreas funcionales pendientes del MVP: almacenamiento de documentos en Cloudflare R2, registro de visitas de seguimiento, calificación de convenios, subida de documentos por el estudiante, actualización de empresa, creación de usuarios por coordinador, configuración global de Swagger Bearer Auth y suite de tests unitarios.
+
+---
+
+### Almacenamiento Cloudflare R2
+
+**Por qué:** Los documentos (CV, contrato, ARL, etc.) deben persistir en object storage compatible con S3, sin depender de AWS.
+
+**Archivos nuevos:**
+- `config/R2Config.java` — bean `S3Client` con `endpointOverride`, `StaticCredentialsProvider`, `Region.of("auto")` y `pathStyleAccessEnabled(true)`
+- `service/StorageService.java` — interfaz: `String upload(String key, String contentType, byte[] data)`
+- `service/impl/R2StorageServiceImpl.java` — implementación; wraps `S3Exception` en `RuntimeException`
+
+**Archivos modificados:**
+- `pom.xml` — dependencia `software.amazon.awssdk:s3:2.26.12`
+- `application.yml` — bloque `app.storage.*` (`endpoint-url`, `bucket`, `access-key`, `secret-key`); valores leídos de variables de entorno (`R2_ENDPOINT_URL`, `R2_BUCKET`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`)
+
+---
+
+### OpenAPI — Bearer Auth global
+
+**Por qué:** `@SecurityRequirement(name = "bearerAuth")` ya estaba en todos los controllers pero el esquema no estaba definido; el candado no aparecía en Swagger UI.
+
+**Archivo nuevo:**
+- `config/OpenApiConfig.java` — bean `OpenAPI` que define el esquema `bearerAuth` (HTTP Bearer JWT) y lo aplica globalmente con `addSecurityItem`
+
+---
+
+### Registro de visitas de seguimiento
+
+**Por qué:** Resolución 002-2024 exige mínimo 3 visitas por convenio activo; el asesor debe registrarlas en el sistema.
+
+**Archivos nuevos:**
+- `model/dto/CreateVisitRequest.java` — `visitDate`, `visitType (VisitType)`, `observations` (10–2000 chars)
+- `model/dto/VisitResponse.java` — `id`, `agreementId`, `advisorEmail`, `visitDate`, `visitType`, `observations`, `createdAt`
+- `service/VisitService.java` — `listVisits()` y `registerVisit()`
+- `service/impl/VisitServiceImpl.java` — `registerVisit` valida estado `ACTIVE` y que el asesor sea el asignado al convenio
+
+**Nuevos endpoints** en `AgreementController`:
+
+| Método | Ruta | Rol |
+|--------|------|-----|
+| `GET` | `/api/v1/agreements/{id}/visits` | `COORDINATOR`, `ACADEMIC_ADVISOR`, `ADMIN` |
+| `POST` | `/api/v1/agreements/{id}/visits` | `ACADEMIC_ADVISOR` |
+
+---
+
+### Calificación de convenios
+
+**Por qué:** Al finalizar la práctica, tanto el asesor académico como el tutor de empresa deben registrar una nota. La nota final es el promedio de ambas.
+
+**Archivo nuevo:**
+- `model/dto/GradeRequest.java` — `grade: BigDecimal` (`@DecimalMin("0.0")` / `@DecimalMax("5.0")`)
+
+**Archivos modificados:**
+- `service/AgreementService.java` — firma `gradeAgreement(Long id, GradeRequest, JwtUser)`
+- `service/impl/AgreementServiceImpl.java`:
+  - `ACADEMIC_ADVISOR` → graba `advisorGrade`; `COMPANY_TUTOR` → graba `companyGrade`
+  - Cuando ambas están presentes: `finalGrade = (advisorGrade + companyGrade).divide(2, 1, HALF_UP)`
+  - Lanza `IllegalStateException` si el convenio no está `ACTIVE` o si el rol ya envió su nota
+  - Lanza `AccessDeniedException` si el usuario no está asignado al convenio o tiene un rol no permitido
+- `controller/AgreementController.java` — `PUT /api/v1/agreements/{id}/grade` (`ACADEMIC_ADVISOR`, `COMPANY_TUTOR`)
+
+---
+
+### Subida de documentos
+
+**Por qué:** El estudiante debe adjuntar documentos (CV, contrato firmado, ARL, EPS, etc.) según la etapa del convenio.
+
+**Archivo nuevo:**
+- `model/dto/DocumentType.java` (enum) — `CV`, `CONTRACT`, `NATIONAL_ID`, `EPS`, `ARL`, `WORK_PLAN`
+
+**Reglas de ventana de carga:**
+- `CV` → permitido en `DRAFT`, `ADMIN_REVIEW`, `COORDINATION_REVIEW`
+- resto → solo en `ACTIVE`
+
+**Archivos modificados:**
+- `service/AgreementService.java` — firma `uploadDocument(Long id, DocumentType, MultipartFile, JwtUser) throws IOException`
+- `service/impl/AgreementServiceImpl.java` — genera clave `agreements/{id}/{type}/{UUID}.{ext}`, llama `storageService.upload()`, actualiza el campo `*FileKey` correspondiente en `Agreement`
+- `controller/AgreementController.java` — `POST /api/v1/agreements/{id}/documents/{type}` (`STUDENT`, `multipart/form-data`)
+
+---
+
+### Actualización de empresa
+
+**Por qué:** Los datos de contacto del representante pueden cambiar después del registro inicial; el NIT es inmutable.
+
+**Archivo nuevo:**
+- `model/dto/UpdateCompanyRequest.java` — `legalName`, `representativeName`, `@Email representativeEmail` (todos opcionales; NIT ausente)
+
+**Archivo modificado:**
+- `controller/CompanyController.java` — `PUT /api/v1/companies/{id}` (`COORDINATOR`, `ADMIN`); aplica solo campos no-nulos y no-vacíos
+
+---
+
+### Creación de usuarios por coordinador
+
+**Por qué:** El coordinador necesita crear cuentas para asesores, tutores y secretarios desde el panel. No puede crear `ADMIN`, `COORDINATOR` ni `STUDENT` por esta vía.
+
+**Archivos nuevos:**
+- `model/dto/AllowedRole.java` (enum) — `ACADEMIC_ADVISOR`, `COMPANY_TUTOR`, `SECRETARY`
+- `model/dto/CreateUserRequest.java` — `email`, `password` (≥8 chars), `universityId`, `role: AllowedRole`
+- `service/UserService.java` — `createManagedUser(CreateUserRequest, JwtUser)`
+- `service/impl/UserServiceImpl.java`:
+  - `COORDINATOR` usa su propio `universityId`; `ADMIN` usa `request.universityId()`
+  - Valida email duplicado; lanza `ResourceNotFoundException` si la universidad no existe
+  - Password hasheado con BCrypt antes de persistir
+
+**Archivo modificado:**
+- `controller/UserController.java` — `POST /api/v1/users` (`COORDINATOR`, `ADMIN`); retorna `201 Created`
+
+---
+
+### Tests unitarios
+
+**Por qué:** Garantizar regresiones detectables sin levantar contexto Spring ni base de datos.
+
+**Stack:** JUnit 5 + Mockito (`@ExtendWith(MockitoExtension.class)`) + AssertJ. Cobertura medida con JaCoCo.
+
+**JaCoCo:** actualizado `0.8.12 → 0.8.13` para soporte de Java 25 (class file major version 69).
+
+**Archivos nuevos:**
+
+| Archivo | Tests |
+|---------|-------|
+| `util/TestFixtures.java` | Fábrica estática: `university`, `user`, `student`, `company`, `activeAgreement`, `jwtUser`, `dummyAgreementResponse` |
+| `service/impl/AgreementServiceImplTest.java` | 19 tests: `GradeAgreement` ×8, `SubmitForReview` ×4, `CompleteAgreement` ×2, `RejectAgreement` ×2, `TenantIsolation` ×3 |
+| `service/impl/VisitServiceImplTest.java` | 8 tests: `RegisterVisit` ×4, `ListVisits` ×4 |
+| `service/impl/UserServiceImplTest.java` | 8 tests: tenant routing, email duplicado, universidad inexistente, mapeo de los 3 roles (`@ParameterizedTest`), encoding de password |
+
+**Total: 37 tests, 0 fallos.**
+
+---
+
 ## [0.2.0] — 2026-04-19
 
 ### Contexto

@@ -144,20 +144,27 @@ public interface AgreementService {
     void activateAgreement(String documensoDocumentId);
 
     /**
-     * Formally closes an ACTIVE agreement (ACTIVE → COMPLETED).
+     * Transitions an ACTIVE agreement to EVALUATION (ACTIVE → EVALUATION).
+     *
+     * <p>Triggered by the coordinator when the internship period has ended.
+     * Once in EVALUATION, both the academic advisor and company tutor must
+     * submit their grades. The agreement transitions automatically to
+     * {@link com.uniremington.api.convenia.model.entity.AgreementStatus#FINISHED}
+     * when both grades are recorded.</p>
      *
      * @param id          The agreement unique identifier.
      * @param currentUser The authenticated user (must be COORDINATOR or ADMIN).
-     * @return The updated agreement in COMPLETED status.
+     * @return The updated agreement in EVALUATION status.
      * @throws IllegalStateException if the agreement is not in ACTIVE status.
      */
-    AgreementResponse completeAgreement(Long id, JwtUser currentUser);
+    AgreementResponse startEvaluation(Long id, JwtUser currentUser);
 
     /**
-     * Submits a grade (0.0–5.0) for an ACTIVE agreement.
+     * Submits a grade (0.0–5.0) for an agreement in EVALUATION status.
      *
      * <p>ACADEMIC_ADVISOR sets {@code advisorGrade}; COMPANY_TUTOR sets {@code companyGrade}.
-     * When both grades are present the service computes {@code finalGrade = (a + c) / 2}.</p>
+     * When both grades are present the service computes {@code finalGrade = (a + c) / 2}
+     * and automatically transitions the agreement to FINISHED.</p>
      *
      * @param id          Agreement unique identifier.
      * @param request     Grade value.

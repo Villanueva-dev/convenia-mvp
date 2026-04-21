@@ -9,9 +9,9 @@ package com.uniremington.api.convenia.model.entity;
  * </p>
  * 
  * <pre>
- *   DRAFT ──► ADMIN_REVIEW ──► COORDINATION_REVIEW ──► PENDING_SIGNATURE ──► ACTIVE
+ *   DRAFT ──► ADMIN_REVIEW ──► COORDINATION_REVIEW ──► PENDING_SIGNATURE ──► ACTIVE ──► EVALUATION ──► FINISHED
  *               │                       │
- *               └───────────────────────► REJECTED
+ *           (back to DRAFT)          REJECTED
  * </pre>
  *
  * <p>
@@ -56,13 +56,23 @@ public enum AgreementStatus {
     ACTIVE,
 
     /**
-     * The practice has been formally closed by the coordinator.
-     * All parties have signed and the internship period has concluded.
+     * The internship period has ended. Both the academic advisor and the company
+     * tutor must now submit their evaluations (50% each). Transitions automatically
+     * to {@link #FINISHED} once both grades are recorded.
      */
-    COMPLETED,
+    EVALUATION,
 
     /**
-     * The agreement was rejected at any review stage.
+     * Both evaluations have been submitted and the final grade has been computed.
+     * Terminal state — the agreement is closed and a completion certificate can
+     * be generated.
+     */
+    FINISHED,
+
+    /**
+     * The agreement was rejected at the COORDINATION_REVIEW stage (terminal).
+     * For ADMIN_REVIEW rejections the agreement is returned to {@link #DRAFT}
+     * so the student can apply corrections.
      * A {@code rejectionReason} must be provided on the {@link Agreement} entity.
      */
     REJECTED

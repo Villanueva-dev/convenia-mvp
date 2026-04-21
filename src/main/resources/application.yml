@@ -70,7 +70,23 @@ app:
     expiration: ${APP_JWT_EXPIRATION:86400000}
   cors:
     # Comma-separated list of allowed frontend origins.
-    allowed-origins: ${APP_ALLOWED_ORIGINS:http://localhost:4200,http://localhost:3000}
+    allowed-origins: ${APP_ALLOWED_ORIGINS:http://localhost:8080,http://localhost:3000,http://localhost:4200}
+  storage:
+    endpoint-url: https://6ca64745261239d70ab98f4ac30a23f2.r2.cloudflarestorage.com
+    bucket:       convenia-docs
+    access-key:   0bf0bfee16a8ecbf7ce5de8b509d9b7b
+    secret-key:   d14294cb5baca98010a5d3225245fb2f314b3a6a0ef69f126e4da0cf1c005cac
+  documenso:
+    # Documenso REST API base URL (cloud: https://app.documenso.com/api/v2).
+    base-url: ${DOCUMENSO_BASE_URL:https://app.documenso.com/api/v2}
+    # API token. Override in production via DOCUMENSO_TOKEN env variable.
+    token: ${DOCUMENSO_TOKEN:api_xp93o1213l658pke}
+    # Webhook signing secret — copy from Documenso dashboard → Webhooks → Secret.
+    # Leave blank locally to skip verification. REQUIRED in production.
+    webhook-secret: ${DOCUMENSO_WEBHOOK_SECRET:}
+    # Optional: pre-built Documenso template secondary ID (e.g. envelope_xxxx).
+    # When set, skips PDF generation and uses the template instead.
+    template-id: ${DOCUMENSO_TEMPLATE_ID:envelope_yiirhezvdkxikmxd}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Logging

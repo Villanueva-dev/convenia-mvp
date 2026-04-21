@@ -201,6 +201,7 @@ public class AgreementServiceImpl implements AgreementService {
         validateDates(agreement.getStartDate(), agreement.getEndDate(), agreement.getContractType());
         validateStudentEligibility(agreement.getStudent());
 
+        agreement.setRejectionReason(null);
         agreement.setStatus(AgreementStatus.ADMIN_REVIEW);
         var saved = agreementRepository.save(agreement);
         recordStatusChange(saved, AgreementStatus.DRAFT, AgreementStatus.ADMIN_REVIEW, currentUser.getUserId(), null);
@@ -231,19 +232,33 @@ public class AgreementServiceImpl implements AgreementService {
         var agreement = loadAgreement(id);
         assertTenantAccess(agreement, currentUser);
 
-        if (agreement.getStatus() != AgreementStatus.ADMIN_REVIEW &&
-                agreement.getStatus() != AgreementStatus.COORDINATION_REVIEW) {
-            throw new IllegalStateException(
-                    "Only agreements in ADMIN_REVIEW or COORDINATION_REVIEW can be rejected");
+        var previousStatus = agreement.getStatus();
+
+        if (previousStatus == AgreementStatus.ADMIN_REVIEW) {
+            // Administrative rejection: return to DRAFT so the student can correct documents.
+            agreement.setStatus(AgreementStatus.DRAFT);
+            agreement.setRejectionReason(reason);
+            var saved = agreementRepository.save(agreement);
+            recordStatusChange(saved, AgreementStatus.ADMIN_REVIEW, AgreementStatus.DRAFT,
+                    currentUser.getUserId(), reason);
+            log.info("Agreement id={} returned to DRAFT from ADMIN_REVIEW: {}", id, reason);
+            return agreementMapper.toResponse(saved);
         }
 
-        var previousStatus = agreement.getStatus();
-        agreement.setStatus(AgreementStatus.REJECTED);
-        agreement.setRejectionReason(reason);
-        var saved = agreementRepository.save(agreement);
-        recordStatusChange(saved, previousStatus, AgreementStatus.REJECTED, currentUser.getUserId(), reason);
-        log.info("Agreement id={} rejected at stage {}", id, previousStatus);
-        return agreementMapper.toResponse(saved);
+        if (previousStatus == AgreementStatus.COORDINATION_REVIEW) {
+            // Academic rejection: terminal state.
+            agreement.setStatus(AgreementStatus.REJECTED);
+            agreement.setRejectionReason(reason);
+            var saved = agreementRepository.save(agreement);
+            recordStatusChange(saved, AgreementStatus.COORDINATION_REVIEW, AgreementStatus.REJECTED,
+                    currentUser.getUserId(), reason);
+            log.info("Agreement id={} rejected at COORDINATION_REVIEW: {}", id, reason);
+            return agreementMapper.toResponse(saved);
+        }
+
+        throw new IllegalStateException(
+                "Only agreements in ADMIN_REVIEW or COORDINATION_REVIEW can be rejected. Current status: "
+                        + previousStatus);
     }
 
     /**
@@ -304,15 +319,15 @@ public class AgreementServiceImpl implements AgreementService {
 
     @Override
     @Transactional
-    public AgreementResponse completeAgreement(Long id, JwtUser currentUser) {
+    public AgreementResponse startEvaluation(Long id, JwtUser currentUser) {
         var agreement = loadAgreement(id);
         assertTenantAccess(agreement, currentUser);
-        assertStatus(agreement, AgreementStatus.ACTIVE, "Only ACTIVE agreements can be completed");
+        assertStatus(agreement, AgreementStatus.ACTIVE, "Only ACTIVE agreements can be moved to evaluation");
 
-        agreement.setStatus(AgreementStatus.COMPLETED);
+        agreement.setStatus(AgreementStatus.EVALUATION);
         var saved = agreementRepository.save(agreement);
-        recordStatusChange(saved, AgreementStatus.ACTIVE, AgreementStatus.COMPLETED, currentUser.getUserId(), null);
-        log.info("Agreement id={} completed by user={}", id, currentUser.getUserId());
+        recordStatusChange(saved, AgreementStatus.ACTIVE, AgreementStatus.EVALUATION, currentUser.getUserId(), null);
+        log.info("Agreement id={} moved to EVALUATION by user={}", id, currentUser.getUserId());
         return agreementMapper.toResponse(saved);
     }
 
@@ -323,7 +338,7 @@ public class AgreementServiceImpl implements AgreementService {
     public AgreementResponse gradeAgreement(Long id, GradeRequest request, JwtUser currentUser) {
         var agreement = loadAgreement(id);
         assertTenantAccess(agreement, currentUser);
-        assertStatus(agreement, AgreementStatus.ACTIVE, "Only ACTIVE agreements can be graded");
+        assertStatus(agreement, AgreementStatus.EVALUATION, "Only agreements in EVALUATION can be graded");
 
         switch (currentUser.getRole()) {
             case "ACADEMIC_ADVISOR" -> {
@@ -352,6 +367,12 @@ public class AgreementServiceImpl implements AgreementService {
                     agreement.getAdvisorGrade()
                             .add(agreement.getCompanyGrade())
                             .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP));
+            agreement.setStatus(AgreementStatus.FINISHED);
+            var saved = agreementRepository.save(agreement);
+            recordStatusChange(saved, AgreementStatus.EVALUATION, AgreementStatus.FINISHED, currentUser.getUserId(),
+                    "Final grade computed: " + agreement.getFinalGrade());
+            log.info("Agreement id={} finished with finalGrade={}", id, agreement.getFinalGrade());
+            return agreementMapper.toResponse(saved);
         }
 
         return agreementMapper.toResponse(agreementRepository.save(agreement));
@@ -365,18 +386,29 @@ public class AgreementServiceImpl implements AgreementService {
                                             JwtUser currentUser) throws IOException {
         var agreement = loadAgreement(id);
         assertTenantAccess(agreement, currentUser);
-        assertOwnershipIfStudent(agreement, currentUser);
 
-        if (type == DocumentType.CV) {
-            if (agreement.getStatus() != AgreementStatus.DRAFT &&
-                    agreement.getStatus() != AgreementStatus.ADMIN_REVIEW &&
-                    agreement.getStatus() != AgreementStatus.COORDINATION_REVIEW) {
-                throw new IllegalStateException(
-                        "CV can only be uploaded while the agreement is in DRAFT, ADMIN_REVIEW, or COORDINATION_REVIEW");
+        boolean isCompanyDoc = type == DocumentType.NIT
+                || type == DocumentType.RUT
+                || type == DocumentType.CAMARA_COMERCIO;
+
+        if (isCompanyDoc) {
+            if (!"COMPANY_TUTOR".equals(currentUser.getRole())) {
+                throw new AccessDeniedException("Only COMPANY_TUTOR can upload company legal documents");
             }
+            if (!agreement.getCompanyRep().getId().equals(currentUser.getUserId())) {
+                throw new AccessDeniedException("You are not the assigned company representative for this agreement");
+            }
+            assertStatus(agreement, AgreementStatus.DRAFT,
+                    "Company documents (NIT, RUT, Cámara de Comercio) can only be uploaded while the agreement is in DRAFT");
         } else {
-            assertStatus(agreement, AgreementStatus.ACTIVE,
-                    "Documents other than CV can only be uploaded for ACTIVE agreements");
+            assertOwnershipIfStudent(agreement, currentUser);
+            if (type == DocumentType.CV) {
+                assertStatus(agreement, AgreementStatus.DRAFT,
+                        "CV can only be uploaded while the agreement is in DRAFT");
+            } else {
+                assertStatus(agreement, AgreementStatus.PENDING_SIGNATURE,
+                        "Student documents (CONTRACT, NATIONAL_ID, EPS, ARL, WORK_PLAN) can only be uploaded during PENDING_SIGNATURE");
+            }
         }
 
         String ext = "";
@@ -388,12 +420,15 @@ public class AgreementServiceImpl implements AgreementService {
         storageService.upload(key, file.getContentType(), file.getBytes());
 
         switch (type) {
-            case CV          -> agreement.setCvFileKey(key);
-            case CONTRACT    -> agreement.setContractFileKey(key);
-            case NATIONAL_ID -> agreement.setNationalIdFileKey(key);
-            case EPS         -> agreement.setEpsFileKey(key);
-            case ARL         -> agreement.setArlFileKey(key);
-            case WORK_PLAN   -> agreement.setWorkPlanFileKey(key);
+            case CV              -> agreement.setCvFileKey(key);
+            case CONTRACT        -> agreement.setContractFileKey(key);
+            case NATIONAL_ID     -> agreement.setNationalIdFileKey(key);
+            case EPS             -> agreement.setEpsFileKey(key);
+            case ARL             -> agreement.setArlFileKey(key);
+            case WORK_PLAN       -> agreement.setWorkPlanFileKey(key);
+            case NIT             -> agreement.setNitFileKey(key);
+            case RUT             -> agreement.setRutFileKey(key);
+            case CAMARA_COMERCIO -> agreement.setCamaraComercioFileKey(key);
         }
 
         return agreementMapper.toResponse(agreementRepository.save(agreement));
