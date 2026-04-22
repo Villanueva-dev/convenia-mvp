@@ -7,6 +7,8 @@ import com.uniremington.api.convenia.model.entity.Company;
 import com.uniremington.api.convenia.model.entity.University;
 import com.uniremington.api.convenia.model.vo.JwtUser;
 import com.uniremington.api.convenia.repository.CompanyRepository;
+import com.uniremington.api.convenia.shared.exception.DuplicateResourceException;
+import com.uniremington.api.convenia.shared.exception.ResourceNotFoundException;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -42,7 +44,7 @@ public class CompanyController {
             @AuthenticationPrincipal JwtUser currentUser) {
 
         if (companyRepository.existsByNitAndUniversityId(request.nit(), currentUser.getUniversityId())) {
-            throw new IllegalArgumentException("A company with NIT " + request.nit() + " already exists");
+            throw new DuplicateResourceException("A company with NIT " + request.nit() + " already exists");
         }
 
         var university = new University();
@@ -69,9 +71,9 @@ public class CompanyController {
 
         var company = "ADMIN".equals(currentUser.getRole()) && currentUser.getUniversityId() == null
                 ? companyRepository.findById(id)
-                        .orElseThrow(() -> new com.uniremington.api.convenia.shared.exception.ResourceNotFoundException("Company", id))
+                        .orElseThrow(() -> new ResourceNotFoundException("Company", id))
                 : companyRepository.findByIdAndUniversityId(id, currentUser.getUniversityId())
-                        .orElseThrow(() -> new com.uniremington.api.convenia.shared.exception.ResourceNotFoundException("Company", id));
+                        .orElseThrow(() -> new ResourceNotFoundException("Company", id));
 
         if (request.legalName() != null && !request.legalName().isBlank()) {
             company.setLegalName(request.legalName());

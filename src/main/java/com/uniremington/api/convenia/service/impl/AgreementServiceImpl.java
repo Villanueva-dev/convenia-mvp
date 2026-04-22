@@ -41,6 +41,7 @@ public class AgreementServiceImpl implements AgreementService {
     private final CompanyRepository                 companyRepository;
     private final UserRepository                    userRepository;
     private final AgreementStatusHistoryRepository  statusHistoryRepository;
+    private final PracticeVisitRepository           practiceVisitRepository;
     private final AgreementMapper                   agreementMapper;
     private final PdfGenerationService              pdfGenerationService;
     private final DocumensoService                  documensoService;
@@ -88,10 +89,10 @@ public class AgreementServiceImpl implements AgreementService {
                 .build();
 
         if (request.academicAdvisorId() != null) {
-            agreement.setAcademicAdvisor(loadUser(request.academicAdvisorId()));
+            agreement.setAcademicAdvisor(loadUser(request.academicAdvisorId(), UserRole.ACADEMIC_ADVISOR));
         }
         if (request.companyRepId() != null) {
-            agreement.setCompanyRep(loadUser(request.companyRepId()));
+            agreement.setCompanyRep(loadUser(request.companyRepId(), UserRole.COMPANY_TUTOR));
         }
 
         var saved = agreementRepository.save(agreement);
@@ -150,10 +151,10 @@ public class AgreementServiceImpl implements AgreementService {
             agreement.setCompany(loadCompany(request.companyId(), agreement.getUniversity().getId()));
         }
         if (request.academicAdvisorId() != null) {
-            agreement.setAcademicAdvisor(loadUser(request.academicAdvisorId()));
+            agreement.setAcademicAdvisor(loadUser(request.academicAdvisorId(), UserRole.ACADEMIC_ADVISOR));
         }
         if (request.companyRepId() != null) {
-            agreement.setCompanyRep(loadUser(request.companyRepId()));
+            agreement.setCompanyRep(loadUser(request.companyRepId(), UserRole.COMPANY_TUTOR));
         }
         if (request.practiceModality() != null)  agreement.setPracticeModality(request.practiceModality());
         if (request.practiceComponent() != null) agreement.setPracticeComponent(request.practiceComponent());
@@ -324,6 +325,13 @@ public class AgreementServiceImpl implements AgreementService {
         assertTenantAccess(agreement, currentUser);
         assertStatus(agreement, AgreementStatus.ACTIVE, "Only ACTIVE agreements can be moved to evaluation");
 
+        long visitCount = practiceVisitRepository.countByAgreementId(id);
+        if (visitCount < 3) {
+            throw new IllegalStateException(
+                    "At least 3 advisor visits must be registered before starting evaluation (found: "
+                    + visitCount + ")");
+        }
+
         agreement.setStatus(AgreementStatus.EVALUATION);
         var saved = agreementRepository.save(agreement);
         recordStatusChange(saved, AgreementStatus.ACTIVE, AgreementStatus.EVALUATION, currentUser.getUserId(), null);
@@ -342,7 +350,8 @@ public class AgreementServiceImpl implements AgreementService {
 
         switch (currentUser.getRole()) {
             case "ACADEMIC_ADVISOR" -> {
-                if (!agreement.getAcademicAdvisor().getId().equals(currentUser.getUserId())) {
+                if (agreement.getAcademicAdvisor() == null ||
+                        !agreement.getAcademicAdvisor().getId().equals(currentUser.getUserId())) {
                     throw new AccessDeniedException("You are not the assigned academic advisor");
                 }
                 if (agreement.getAdvisorGrade() != null) {
@@ -351,7 +360,8 @@ public class AgreementServiceImpl implements AgreementService {
                 agreement.setAdvisorGrade(request.grade());
             }
             case "COMPANY_TUTOR" -> {
-                if (!agreement.getCompanyRep().getId().equals(currentUser.getUserId())) {
+                if (agreement.getCompanyRep() == null ||
+                        !agreement.getCompanyRep().getId().equals(currentUser.getUserId())) {
                     throw new AccessDeniedException("You are not the assigned company tutor");
                 }
                 if (agreement.getCompanyGrade() != null) {
@@ -395,7 +405,8 @@ public class AgreementServiceImpl implements AgreementService {
             if (!"COMPANY_TUTOR".equals(currentUser.getRole())) {
                 throw new AccessDeniedException("Only COMPANY_TUTOR can upload company legal documents");
             }
-            if (!agreement.getCompanyRep().getId().equals(currentUser.getUserId())) {
+            if (agreement.getCompanyRep() == null ||
+                    !agreement.getCompanyRep().getId().equals(currentUser.getUserId())) {
                 throw new AccessDeniedException("You are not the assigned company representative for this agreement");
             }
             assertStatus(agreement, AgreementStatus.DRAFT,
@@ -434,6 +445,22 @@ public class AgreementServiceImpl implements AgreementService {
         return agreementMapper.toResponse(agreementRepository.save(agreement));
     }
 
+    // ── Document download ─────────────────────────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public byte[] downloadDocument(Long id, DocumentType type, JwtUser currentUser) {
+        var agreement = loadAgreement(id);
+        assertTenantAccess(agreement, currentUser);
+
+        String key = fileKeyFor(agreement, type);
+        if (key == null) {
+            throw new ResourceNotFoundException(
+                    "Document " + type.name() + " has not been uploaded for agreement " + id);
+        }
+        return storageService.download(key);
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private Agreement loadAgreement(Long id) {
@@ -450,6 +477,16 @@ public class AgreementServiceImpl implements AgreementService {
     private User loadUser(Long userId) {
         return userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+    }
+
+    private User loadUser(Long userId, UserRole expectedRole) {
+        var user = loadUser(userId);
+        if (user.getRole() != expectedRole) {
+            throw new IllegalArgumentException(
+                    "User " + userId + " must have role " + expectedRole.name()
+                    + " but has " + user.getRole().name());
+        }
+        return user;
     }
 
     private void assertTenantAccess(Agreement agreement, JwtUser user) {
@@ -533,6 +570,20 @@ public class AgreementServiceImpl implements AgreementService {
                 .notes(notes)
                 .build();
         statusHistoryRepository.save(history);
+    }
+
+    private String fileKeyFor(Agreement agreement, DocumentType type) {
+        return switch (type) {
+            case CV              -> agreement.getCvFileKey();
+            case CONTRACT        -> agreement.getContractFileKey();
+            case NATIONAL_ID     -> agreement.getNationalIdFileKey();
+            case EPS             -> agreement.getEpsFileKey();
+            case ARL             -> agreement.getArlFileKey();
+            case WORK_PLAN       -> agreement.getWorkPlanFileKey();
+            case NIT             -> agreement.getNitFileKey();
+            case RUT             -> agreement.getRutFileKey();
+            case CAMARA_COMERCIO -> agreement.getCamaraComercioFileKey();
+        };
     }
 
     private void validateDates(java.time.LocalDate startDate, java.time.LocalDate endDate,

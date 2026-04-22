@@ -34,6 +34,7 @@ class AgreementServiceImplTest {
     @Mock CompanyRepository                 companyRepository;
     @Mock UserRepository                    userRepository;
     @Mock AgreementStatusHistoryRepository  statusHistoryRepository;
+    @Mock PracticeVisitRepository           practiceVisitRepository;
     @Mock AgreementMapper                   agreementMapper;
     @Mock PdfGenerationService              pdfGenerationService;
     @Mock DocumensoService                  documensoService;
@@ -247,11 +248,12 @@ class AgreementServiceImplTest {
     class StartEvaluation {
 
         @Test
-        void transitionsActiveToEvaluation() {
+        void transitionsActiveToEvaluationWithEnoughVisits() {
             var agreement   = activeAgreement();
             var currentUser = TestFixtures.jwtUser(1L, "COORDINATOR", 1L);
 
             when(agreementRepository.findById(1L)).thenReturn(Optional.of(agreement));
+            when(practiceVisitRepository.countByAgreementId(1L)).thenReturn(3L);
             when(agreementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(statusHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
             when(userRepository.getReferenceById(1L)).thenReturn(advisor);
@@ -260,6 +262,19 @@ class AgreementServiceImplTest {
             service.startEvaluation(1L, currentUser);
 
             assertThat(agreement.getStatus()).isEqualTo(AgreementStatus.EVALUATION);
+        }
+
+        @Test
+        void throwsWhenFewerThanThreeVisits() {
+            var agreement   = activeAgreement();
+            var currentUser = TestFixtures.jwtUser(1L, "COORDINATOR", 1L);
+
+            when(agreementRepository.findById(1L)).thenReturn(Optional.of(agreement));
+            when(practiceVisitRepository.countByAgreementId(1L)).thenReturn(2L);
+
+            assertThatThrownBy(() -> service.startEvaluation(1L, currentUser))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("3 advisor visits");
         }
 
         @Test

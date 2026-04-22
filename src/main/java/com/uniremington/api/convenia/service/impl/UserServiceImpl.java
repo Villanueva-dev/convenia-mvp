@@ -9,6 +9,7 @@ import com.uniremington.api.convenia.model.vo.JwtUser;
 import com.uniremington.api.convenia.repository.UniversityRepository;
 import com.uniremington.api.convenia.repository.UserRepository;
 import com.uniremington.api.convenia.service.UserService;
+import com.uniremington.api.convenia.shared.exception.DuplicateResourceException;
 import com.uniremington.api.convenia.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -31,7 +32,7 @@ public class UserServiceImpl implements UserService {
                 : currentUser.getUniversityId();
 
         if (userRepository.existsByEmail(request.email())) {
-            throw new IllegalArgumentException("A user with email " + request.email() + " already exists");
+            throw new DuplicateResourceException("A user with email " + request.email() + " already exists");
         }
 
         var university = universityRepository.findById(universityId)

@@ -86,7 +86,7 @@ app:
     webhook-secret: ${DOCUMENSO_WEBHOOK_SECRET:}
     # Optional: pre-built Documenso template secondary ID (e.g. envelope_xxxx).
     # When set, skips PDF generation and uses the template instead.
-    template-id: ${DOCUMENSO_TEMPLATE_ID:envelope_yiirhezvdkxikmxd}
+    template-id: ${DOCUMENSO_TEMPLATE_ID:}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Logging

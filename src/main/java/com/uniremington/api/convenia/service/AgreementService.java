@@ -185,4 +185,18 @@ public interface AgreementService {
      */
     AgreementResponse uploadDocument(Long id, DocumentType type, MultipartFile file, JwtUser currentUser)
             throws IOException;
+
+    /**
+     * Downloads a previously uploaded document from Cloudflare R2.
+     *
+     * <p>Any authenticated user with tenant access can download documents —
+     * secretaries and coordinators need them to validate submissions.</p>
+     *
+     * @param id          Agreement unique identifier.
+     * @param type        Document type to download.
+     * @param currentUser Authenticated user (tenant access enforced).
+     * @return Raw file bytes.
+     * @throws com.uniremington.api.convenia.shared.exception.ResourceNotFoundException if the document has not been uploaded yet.
+     */
+    byte[] downloadDocument(Long id, DocumentType type, JwtUser currentUser);
 }

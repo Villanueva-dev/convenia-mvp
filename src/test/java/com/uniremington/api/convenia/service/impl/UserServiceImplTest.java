@@ -5,6 +5,7 @@ import com.uniremington.api.convenia.model.dto.CreateUserRequest;
 import com.uniremington.api.convenia.model.entity.UserRole;
 import com.uniremington.api.convenia.repository.UniversityRepository;
 import com.uniremington.api.convenia.repository.UserRepository;
+import com.uniremington.api.convenia.shared.exception.DuplicateResourceException;
 import com.uniremington.api.convenia.shared.exception.ResourceNotFoundException;
 import com.uniremington.api.convenia.util.TestFixtures;
 import org.junit.jupiter.api.Test;
@@ -77,7 +78,7 @@ class UserServiceImplTest {
         when(userRepository.existsByEmail("existing@test.edu.co")).thenReturn(true);
 
         assertThatThrownBy(() -> service.createManagedUser(request, coordinator))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(DuplicateResourceException.class)
                 .hasMessageContaining("already exists");
 
         verify(universityRepository, never()).findById(any());

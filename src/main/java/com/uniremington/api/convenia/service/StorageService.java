@@ -11,4 +11,12 @@ public interface StorageService {
      * @return The key used for storage (same as input key).
      */
     String upload(String key, String contentType, byte[] data);
+
+    /**
+     * Downloads an object from R2 by its storage key.
+     *
+     * @param key The full R2 object key (path).
+     * @return Raw file bytes.
+     */
+    byte[] download(String key);
 }

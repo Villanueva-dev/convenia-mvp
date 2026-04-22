@@ -295,6 +295,29 @@ public class AgreementController {
         return ResponseEntity.ok(agreementService.uploadDocument(id, type, file, currentUser));
     }
 
+    @Operation(summary = "Download uploaded document",
+            description = "Downloads a document previously uploaded to R2 (CV, NIT, RUT, CONTRACT, etc.)")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "File returned"),
+            @ApiResponse(responseCode = "404", description = "Document not yet uploaded")
+    })
+    @GetMapping("/{id}/documents/{type}")
+    public ResponseEntity<byte[]> downloadUploadedDocument(
+            @PathVariable Long id,
+            @PathVariable DocumentType type,
+            @AuthenticationPrincipal JwtUser currentUser) {
+
+        byte[] data = agreementService.downloadDocument(id, type, currentUser);
+
+        var headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentDisposition(ContentDisposition.attachment()
+                .filename(type.name().toLowerCase() + "_" + id + ".pdf")
+                .build());
+
+        return ResponseEntity.ok().headers(headers).body(data);
+    }
+
     @Operation(summary = "Download signed document",
             description = "Proxies the signed PDF from Documenso for the given agreement")
     @ApiResponses({

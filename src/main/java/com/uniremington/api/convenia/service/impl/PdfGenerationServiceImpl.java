@@ -2,6 +2,9 @@ package com.uniremington.api.convenia.service.impl;
 
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import com.uniremington.api.convenia.model.entity.Agreement;
+import com.uniremington.api.convenia.model.entity.ContractType;
+import com.uniremington.api.convenia.model.entity.PracticeComponent;
+import com.uniremington.api.convenia.model.entity.PracticeModality;
 import com.uniremington.api.convenia.service.PdfGenerationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -13,10 +16,6 @@ import java.io.ByteArrayOutputStream;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 
-/**
- * Generates practice agreement PDFs by processing the Thymeleaf template
- * {@code convenio_practica} and converting the resulting HTML to PDF via OpenHTMLToPDF.
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -26,13 +25,6 @@ public class PdfGenerationServiceImpl implements PdfGenerationService {
 
     private final TemplateEngine templateEngine;
 
-    /**
-     * {@inheritDoc}
-     *
-     * <p>Builds a Thymeleaf {@link Context} with all agreement parties and dates,
-     * processes the {@code convenio_practica} template to HTML, then converts
-     * the HTML to PDF bytes using OpenHTMLToPDF's {@link PdfRendererBuilder}.</p>
-     */
     @Override
     public byte[] generateAgreementPdf(Agreement agreement) {
         log.info("Generating PDF for agreement id={}", agreement.getId());
@@ -48,8 +40,7 @@ public class PdfGenerationServiceImpl implements PdfGenerationService {
             builder.run();
 
             byte[] pdfBytes = outputStream.toByteArray();
-            log.info("PDF generated successfully for agreement id={}, size={} bytes",
-                    agreement.getId(), pdfBytes.length);
+            log.info("PDF generated for agreement id={}, size={} bytes", agreement.getId(), pdfBytes.length);
             return pdfBytes;
 
         } catch (Exception e) {
@@ -61,31 +52,74 @@ public class PdfGenerationServiceImpl implements PdfGenerationService {
     private Context buildTemplateContext(Agreement agreement) {
         var ctx = new Context();
 
-        ctx.setVariable("agreementId",       agreement.getId());
-        ctx.setVariable("companyName",        agreement.getCompany().getLegalName());
-        ctx.setVariable("companyNit",         agreement.getCompany().getNit());
-        ctx.setVariable("companyRepName",     agreement.getCompany().getRepresentativeName());
-        ctx.setVariable("studentName",        agreement.getStudent().getFullName());
-        ctx.setVariable("studentId",          agreement.getStudent().getDocumentNumber());
-        ctx.setVariable("universityName",     agreement.getUniversity().getName());
-        ctx.setVariable("programName",        agreement.getStudent().getAcademicProgram().getName());
-        ctx.setVariable("practiceModality",   agreement.getPracticeModality().name());
-        ctx.setVariable("practiceComponent",  agreement.getPracticeComponent().name());
-        ctx.setVariable("contractType",       agreement.getContractType().name());
-        ctx.setVariable("weeklyHours",        agreement.getWeeklyHours());
-        ctx.setVariable("monthlyStipend",     agreement.getMonthlyStipend());
-        ctx.setVariable("startDate",          formatDate(agreement.getStartDate()));
-        ctx.setVariable("endDate",            formatDate(agreement.getEndDate()));
-        ctx.setVariable("currentDate",        formatDate(LocalDate.now()));
+        // Agreement
+        ctx.setVariable("agreementId",           agreement.getId());
 
+        // University
+        ctx.setVariable("universityName",         agreement.getUniversity().getName());
+
+        // Company
+        ctx.setVariable("companyName",            agreement.getCompany().getLegalName());
+        ctx.setVariable("companyNit",             agreement.getCompany().getNit());
+        ctx.setVariable("companyRepName",         agreement.getCompany().getRepresentativeName());
+
+        // Student
+        var student = agreement.getStudent();
+        ctx.setVariable("studentName",            student.getFullName());
+        ctx.setVariable("studentId",              student.getDocumentNumber());
+        ctx.setVariable("studentEmail",           student.getUser().getEmail());
+        ctx.setVariable("studentPhone",           student.getPhoneNumber());
+        ctx.setVariable("programName",            student.getAcademicProgram().getName());
+
+        // Enum display labels (Spanish, per Resolución 002-2024)
+        ctx.setVariable("practiceModalityLabel",  modalityLabel(agreement.getPracticeModality()));
+        ctx.setVariable("practiceComponentLabel", componentLabel(agreement.getPracticeComponent()));
+        ctx.setVariable("contractTypeLabel",      contractTypeLabel(agreement.getContractType()));
+
+        // Dates and hours
+        ctx.setVariable("startDate",              formatDate(agreement.getStartDate()));
+        ctx.setVariable("endDate",                formatDate(agreement.getEndDate()));
+        ctx.setVariable("weeklyHours",            agreement.getWeeklyHours());
+        ctx.setVariable("monthlyStipend",         agreement.getMonthlyStipend());
+        ctx.setVariable("currentDate",            formatDate(LocalDate.now()));
+
+        // Advisor — User entity only stores email; full name requires a profile entity
         if (agreement.getAcademicAdvisor() != null) {
-            ctx.setVariable("advisorName",  agreement.getAcademicAdvisor().getEmail());
+            ctx.setVariable("advisorEmail", agreement.getAcademicAdvisor().getEmail());
         }
+
+        // Company tutor — same limitation, email only
         if (agreement.getCompanyRep() != null) {
-            ctx.setVariable("companyRepUserEmail", agreement.getCompanyRep().getEmail());
+            ctx.setVariable("companyTutorEmail", agreement.getCompanyRep().getEmail());
         }
 
         return ctx;
+    }
+
+    private String modalityLabel(PracticeModality modality) {
+        return switch (modality) {
+            case PROFESSIONAL  -> "Práctica Profesional";
+            case SOCIAL        -> "Práctica Social";
+            case RESEARCH      -> "Práctica Investigativa";
+            case INTERNATIONAL -> "Práctica Internacional";
+        };
+    }
+
+    private String componentLabel(PracticeComponent component) {
+        return switch (component) {
+            case ACADEMIC   -> "Componente Académico";
+            case SOCIAL     -> "Componente Social";
+            case MANAGEMENT -> "Componente de Gestión";
+        };
+    }
+
+    private String contractTypeLabel(ContractType contractType) {
+        return switch (contractType) {
+            case EMPLOYMENT           -> "Contrato Laboral";
+            case APPRENTICESHIP       -> "Contrato de Aprendizaje (SENA/SGVA)";
+            case INTERNSHIP_AGREEMENT -> "Convenio Específico de Pasantía";
+            case FRAMEWORK_AGREEMENT  -> "Convenio Marco";
+        };
     }
 
     private String formatDate(LocalDate date) {

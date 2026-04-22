@@ -6,7 +6,6 @@ import com.uniremington.api.convenia.model.entity.UserRole;
 import com.uniremington.api.convenia.model.vo.JwtUser;
 import com.uniremington.api.convenia.repository.UserRepository;
 import com.uniremington.api.convenia.service.UserService;
-import com.uniremington.api.convenia.shared.exception.ResourceNotFoundException;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -39,7 +38,7 @@ public class UserController {
         try {
             userRole = UserRole.valueOf(role.toUpperCase());
         } catch (IllegalArgumentException e) {
-            throw new ResourceNotFoundException("Unknown role: " + role);
+            throw new IllegalArgumentException("Unknown role: '" + role + "'");
         }
 
         var users = userRepository.findByUniversityIdAndRoleOrderByEmailAsc(

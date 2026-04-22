@@ -13,6 +13,7 @@ import com.uniremington.api.convenia.repository.UniversityRepository;
 import com.uniremington.api.convenia.repository.UserRepository;
 import com.uniremington.api.convenia.service.AuthService;
 import com.uniremington.api.convenia.service.JwtService;
+import com.uniremington.api.convenia.shared.exception.DuplicateResourceException;
 import com.uniremington.api.convenia.shared.exception.InvalidCredentialsException;
 import com.uniremington.api.convenia.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -101,7 +102,7 @@ public class AuthServiceImpl implements AuthService {
     @Transactional
     public AuthResponse register(RegisterRequest request, UserRole role) {
         if (userRepository.existsByEmail(request.email())) {
-            throw new IllegalArgumentException("Email already registered: " + request.email());
+            throw new DuplicateResourceException("Email already registered: " + request.email());
         }
 
         var university = universityRepository.findById(request.universityId())

@@ -75,6 +75,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         } catch (JwtException | IllegalArgumentException e) {
             log.error("Failed to build authentication from JWT: {}", e.getMessage());
             SecurityContextHolder.clearContext();
+            response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Token claims are invalid");
+            return;
         }
 
         filterChain.doFilter(request, response);

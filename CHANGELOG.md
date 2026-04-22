@@ -1,5 +1,167 @@
 # Convenia API — Changelog
 
+## [0.6.0] — 2026-04-22
+
+### Contexto
+Cierre de los dos pendientes medios identificados en v0.5.0: visibilidad de documentos para los revisores y corrección temprana de asignaciones de rol incorrectas. Con esta versión el flujo de revisión documental queda completo de extremo a extremo.
+
+---
+
+### Endpoint de descarga de documentos R2
+
+**Por qué:** La secretaría y la coordinación no podían ver los archivos subidos durante las fases ADMIN_REVIEW y COORDINATION_REVIEW. Los file keys existían en la base de datos pero no había forma de obtener los bytes desde el frontend.
+
+**Nuevo endpoint:**
+```
+GET /api/v1/agreements/{id}/documents/{type}
+```
+Devuelve el archivo en `application/pdf` con `Content-Disposition: attachment`. Soporta todos los tipos: `CV`, `NIT`, `RUT`, `CAMARA_COMERCIO`, `CONTRACT`, `NATIONAL_ID`, `EPS`, `ARL`, `WORK_PLAN`.
+
+- Si el documento no ha sido subido aún → `404 Not Found` con mensaje descriptivo.
+- Control de acceso: cualquier usuario autenticado con acceso al tenant puede descargar (secretaría, coordinación, asesor, tutor, estudiante).
+
+**`StorageService`** — nuevo método `download(String key) → byte[]`
+
+**`R2StorageServiceImpl`** — implementación con `s3Client.getObjectAsBytes(GetObjectRequest)`
+
+**`AgreementServiceImpl`** — `downloadDocument()` + helper privado `fileKeyFor(agreement, type)` que mapea `DocumentType` → campo del entity.
+
+**`AgreementController`** — endpoint `GET /{id}/documents/{type}`
+
+**Archivos modificados:**
+- `service/StorageService.java`
+- `service/AgreementService.java`
+- `service/impl/R2StorageServiceImpl.java`
+- `service/impl/AgreementServiceImpl.java`
+- `controller/AgreementController.java`
+
+---
+
+### Validación de rol al asignar asesor/tutor
+
+**Por qué:** `loadUser()` en `createAgreement` y `updateAgreement` cargaba cualquier usuario sin verificar su rol. Se podía asignar un estudiante como asesor académico sin error; el fallo ocurría mucho más tarde en `gradeAgreement`, haciendo muy difícil el diagnóstico.
+
+**Fix:** Nuevo overload `loadUser(Long id, UserRole expectedRole)`. Si el rol no coincide → `IllegalArgumentException` → **400 Bad Request** inmediato al crear o actualizar el acuerdo.
+
+- `academicAdvisorId` → valida `UserRole.ACADEMIC_ADVISOR`
+- `companyRepId` → valida `UserRole.COMPANY_TUTOR`
+
+**Archivos modificados:**
+- `service/impl/AgreementServiceImpl.java`
+
+**Total: 39 tests, 0 fallos.**
+
+---
+
+### Pendientes para revisión antes de cierre MVP
+
+| # | Ítem | Estado |
+|---|------|--------|
+| 1 | Constancia de culminación — `GET /agreements/{id}/certificate` para FINISHED | Aplazado |
+
+---
+
+## [0.5.0] — 2026-04-22
+
+### Contexto
+Dos sprints de calidad sobre el backend: cobertura completa de errores HTTP y corrección de bugs críticos detectados en el análisis de gaps del MVP. El objetivo es que cada falla tenga un código de estado y un mensaje precisos para acelerar el diagnóstico en producción.
+
+---
+
+### Manejo de errores y excepciones (RFC 7807)
+
+**Por qué:** `GlobalExceptionHandler` cubría los casos básicos pero dejaba sin mapear errores de servicios externos (Documenso, R2), duplicados de datos y fallos del filtro JWT, resultando en respuestas 500 opacas o códigos de estado semánticamente incorrectos.
+
+**Nuevas clases de excepción:**
+- `ExternalServiceException` — para fallos de Documenso y Cloudflare R2 → **502 Bad Gateway**
+- `DuplicateResourceException` — para email o NIT duplicado → **409 Conflict** (antes devolvían 400)
+
+**Nuevos handlers en `GlobalExceptionHandler`:**
+
+| Excepción | HTTP | Título |
+|-----------|------|--------|
+| `ExternalServiceException` | 502 | External service error |
+| `DuplicateResourceException` | 409 | Duplicate resource |
+| `AuthenticationException` (Spring Security) | 401 | Authentication required |
+| `IOException` (multipart truncado) | 400 | File read error |
+
+**`JwtAuthenticationFilter` — fix crítico:**
+Si `validateToken()` devuelve `true` pero `buildAuthentication()` falla (claims nulos o malformados), el catch block antes limpiaba el contexto pero dejaba pasar el request → Spring Security devolvía 403 en vez de 401. Ahora: `response.sendError(401)` + `return`.
+
+**`DocumensoServiceImpl` — envolvimiento de llamadas externas:**
+- Reemplazados todos los `Objects.requireNonNull(response, …)` por lanzamiento de `ExternalServiceException` (antes lanzaban `NullPointerException` no capturado → 500).
+- Cada bloque `documensoRestClient.*` ahora envuelve `RestClientException` en `ExternalServiceException`.
+Afecta: `sendViaTemplate`, `fetchTemplateRecipients`, `createEnvelope`, `distribute`, `downloadSignedPdf`.
+
+**Correcciones de tipo de excepción:**
+
+| Lugar | Antes | Ahora | HTTP |
+|-------|-------|-------|------|
+| `AuthServiceImpl.register()` | `IllegalArgumentException` | `DuplicateResourceException` | 409 |
+| `UserServiceImpl.createManagedUser()` | `IllegalArgumentException` | `DuplicateResourceException` | 409 |
+| `CompanyController.createCompany()` | `IllegalArgumentException` | `DuplicateResourceException` | 409 |
+| `UserController.listByRole()` (rol inválido) | `ResourceNotFoundException` | `IllegalArgumentException` | 400 |
+
+**Archivos nuevos:**
+- `shared/exception/ExternalServiceException.java`
+- `shared/exception/DuplicateResourceException.java`
+
+**Archivos modificados:**
+- `shared/exception/GlobalExceptionHandler.java`
+- `config/JwtAuthenticationFilter.java`
+- `service/impl/DocumensoServiceImpl.java`
+- `service/impl/AuthServiceImpl.java`
+- `service/impl/UserServiceImpl.java`
+- `controller/CompanyController.java`
+- `controller/UserController.java`
+
+**Tests:** `UserServiceImplTest.throwsWhenEmailAlreadyExists` actualizado para esperar `DuplicateResourceException`.
+
+---
+
+### Bugs críticos — Máquina de estados
+
+**Bug 1 — `startEvaluation` ignoraba la regla de mínimo 3 visitas**
+
+**Por qué:** `PracticeVisitRepository.countByAgreementId()` existía con su javadoc (`"Used to enforce the minimum three (3) visits rule"`) pero nunca era llamado desde `startEvaluation()`. Un coordinador podía mover el convenio a EVALUATION sin que el asesor hubiera registrado ninguna visita, violando la Resolución 002-2024.
+
+**Fix:** `startEvaluation()` ahora consulta el conteo antes de transicionar:
+```
+< 3 visitas → IllegalStateException → 409 Conflict
+```
+
+**Bug 2 — NPE en `uploadDocument` y `gradeAgreement` cuando asesor o tutor no asignados**
+
+**Por qué:** Tres sitios hacían `agreement.getAcademicAdvisor().getId()` o `agreement.getCompanyRep().getId()` sin verificar null. Como los campos `academicAdvisorId` y `companyRepId` son opcionales en `createAgreement`, si el acuerdo se creó sin ellos la llamada explotaba en `NullPointerException` → 500 opaco. Ahora devuelven 403 con mensaje descriptivo.
+
+Sitios corregidos:
+- `gradeAgreement` rama `ACADEMIC_ADVISOR` — null check en `academicAdvisor`
+- `gradeAgreement` rama `COMPANY_TUTOR` — null check en `companyRep`
+- `uploadDocument` bloque de documentos de empresa — null check en `companyRep`
+
+**Archivos modificados:**
+- `service/impl/AgreementServiceImpl.java` — inyección de `PracticeVisitRepository`, validación en `startEvaluation`, null checks
+
+**Tests actualizados:**
+- `StartEvaluation.transitionsActiveToEvaluation` → renombrado a `transitionsActiveToEvaluationWithEnoughVisits`; agrega stub `countByAgreementId = 3`
+- `StartEvaluation.throwsWhenFewerThanThreeVisits` — nuevo: stub `countByAgreementId = 2` → espera `IllegalStateException`
+
+**Total: 39 tests, 0 fallos.**
+
+---
+
+### Pendientes para revisión antes de cierre MVP
+
+> Estos ítems no bloquean el flujo principal pero deben resolverse antes de considerar el backend completo.
+
+| # | Ítem | Impacto | Estado |
+|---|------|---------|--------|
+| 1 | **Endpoint descarga de documentos R2** — no existe `GET /agreements/{id}/documents/{type}`. La secretaría y coordinación no pueden ver los archivos para validarlos. | Los revisores operan a ciegas durante `ADMIN_REVIEW` y `COORDINATION_REVIEW`. | Pendiente |
+| 2 | **Validación de rol al asignar asesor/tutor** — `loadUser()` en `createAgreement` no verifica que `academicAdvisorId` tenga rol `ACADEMIC_ADVISOR` ni que `companyRepId` tenga rol `COMPANY_TUTOR`. Cualquier usuario puede ser asignado. | Bug silencioso; falla tarde (en `gradeAgreement`) en vez de temprano. | Pendiente |
+| 3 | **Constancia de culminación (FINISHED)** — sin endpoint `GET /agreements/{id}/certificate`. El convenio llega a FINISHED con la nota calculada pero sin output descargable para el estudiante. | Flujo completo sin acción de cierre. Explícitamente aplazado. | Aplazado |
+
+---
+
 ## [0.4.0] — 2026-04-21
 
 ### Contexto

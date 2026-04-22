@@ -5,11 +5,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.io.IOException;
 import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.stream.Collectors;
@@ -104,9 +106,7 @@ public class GlobalExceptionHandler {
     /**
      * Handles failed login attempts (wrong email or password).
      *
-     * <p>
-     * The message is intentionally generic — never reveal which field was wrong.
-     * </p>
+     * <p>The message is intentionally generic — never reveal which field was wrong.</p>
      */
     @ExceptionHandler(InvalidCredentialsException.class)
     public ResponseEntity<ProblemDetail> handleInvalidCredentials(
@@ -119,6 +119,24 @@ public class GlobalExceptionHandler {
                 ex.getMessage());
         problem.setType(URI.create(BASE_URI + "/unauthorized"));
         problem.setTitle("Authentication failed");
+
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(problem);
+    }
+
+    /**
+     * Handles Spring Security {@link AuthenticationException} subclasses that escape
+     * the filter chain and reach the controller layer (e.g., InsufficientAuthenticationException).
+     */
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ProblemDetail> handleSpringAuthentication(AuthenticationException ex) {
+
+        log.warn("Spring Security authentication exception: {}", ex.getMessage());
+
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.UNAUTHORIZED,
+                "Authentication is required to access this resource");
+        problem.setType(URI.create(BASE_URI + "/unauthorized"));
+        problem.setTitle("Authentication required");
 
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(problem);
     }
@@ -184,6 +202,26 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
     }
 
+    /**
+     * Handles duplicate-resource conflicts (duplicate email, NIT, etc.).
+     *
+     * <p>Returns 409 instead of 400 to signal that the request was valid but
+     * conflicts with existing data.</p>
+     */
+    @ExceptionHandler(DuplicateResourceException.class)
+    public ResponseEntity<ProblemDetail> handleDuplicateResource(DuplicateResourceException ex) {
+
+        log.warn("Duplicate resource: {}", ex.getMessage());
+
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT,
+                ex.getMessage());
+        problem.setType(URI.create(BASE_URI + "/conflict"));
+        problem.setTitle("Duplicate resource");
+
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
+    }
+
     // ── 400 Bad Request — Business rule violations ────────────────────────────
 
     /**
@@ -206,6 +244,48 @@ public class GlobalExceptionHandler {
         problem.setTitle("Invalid request");
 
         return ResponseEntity.badRequest().body(problem);
+    }
+
+    // ── 400 Bad Request — Multipart / file I/O errors ────────────────────────
+
+    /**
+     * Handles {@link java.io.IOException} thrown when reading an uploaded file's bytes.
+     *
+     * <p>Typically caused by a truncated or malformed multipart stream from the client.</p>
+     */
+    @ExceptionHandler(IOException.class)
+    public ResponseEntity<ProblemDetail> handleIo(IOException ex) {
+
+        log.warn("File read error: {}", ex.getMessage());
+
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST,
+                "Could not read the uploaded file. Ensure the file is complete and try again.");
+        problem.setType(URI.create(BASE_URI + "/bad-request"));
+        problem.setTitle("File read error");
+
+        return ResponseEntity.badRequest().body(problem);
+    }
+
+    // ── 502 Bad Gateway — External service failures ───────────────────────────
+
+    /**
+     * Handles failures from external dependencies (Documenso, Cloudflare R2).
+     *
+     * <p>Returns 502 so callers know the failure is upstream and not caused by their request.</p>
+     */
+    @ExceptionHandler(ExternalServiceException.class)
+    public ResponseEntity<ProblemDetail> handleExternalService(ExternalServiceException ex) {
+
+        log.error("External service failure: {}", ex.getMessage(), ex.getCause());
+
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_GATEWAY,
+                "An external service is currently unavailable. Please try again later.");
+        problem.setType(URI.create(BASE_URI + "/external-service"));
+        problem.setTitle("External service error");
+
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(problem);
     }
 
     // ── 500 Internal Server Error — Unexpected failures ───────────────────────

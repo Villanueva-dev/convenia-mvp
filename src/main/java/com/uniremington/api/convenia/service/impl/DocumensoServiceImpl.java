@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.uniremington.api.convenia.model.entity.Agreement;
 import com.uniremington.api.convenia.service.DocumensoService;
+import com.uniremington.api.convenia.shared.exception.ExternalServiceException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
@@ -11,12 +12,12 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 
 /**
@@ -88,29 +89,41 @@ public class DocumensoServiceImpl implements DocumensoService {
         var body = new LinkedMultiValueMap<String, Object>();
         body.add("payload", payloadJson);
 
-        var response = documensoRestClient.post()
-                .uri("/envelope/use")
-                .contentType(MediaType.MULTIPART_FORM_DATA)
-                .body(body)
-                .retrieve()
-                .body(UseEnvelopeResponse.class);
+        try {
+            var response = documensoRestClient.post()
+                    .uri("/envelope/use")
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(body)
+                    .retrieve()
+                    .body(UseEnvelopeResponse.class);
 
-        Objects.requireNonNull(response, "Documenso /envelope/use returned null response");
-        log.debug("Envelope created from template: id={}", response.id());
-        return response.id();
+            if (response == null) {
+                throw new ExternalServiceException("Documenso /envelope/use returned null response");
+            }
+            log.debug("Envelope created from template: id={}", response.id());
+            return response.id();
+        } catch (RestClientException e) {
+            throw new ExternalServiceException("Documenso API error on /envelope/use: " + e.getMessage(), e);
+        }
     }
 
     private List<TemplateRecipient> fetchTemplateRecipients(String templateId) {
-        var response = documensoRestClient.get()
-                .uri("/envelope/" + templateId)
-                .retrieve()
-                .body(GetEnvelopeResponse.class);
+        try {
+            var response = documensoRestClient.get()
+                    .uri("/envelope/" + templateId)
+                    .retrieve()
+                    .body(GetEnvelopeResponse.class);
 
-        Objects.requireNonNull(response, "Documenso GET /envelope/" + templateId + " returned null");
-        if (response.recipients() == null || response.recipients().isEmpty()) {
-            throw new IllegalStateException("Documenso template " + templateId + " has no recipients configured");
+            if (response == null) {
+                throw new ExternalServiceException("Documenso GET /envelope/" + templateId + " returned null");
+            }
+            if (response.recipients() == null || response.recipients().isEmpty()) {
+                throw new ExternalServiceException("Documenso template " + templateId + " has no recipients configured");
+            }
+            return response.recipients();
+        } catch (RestClientException e) {
+            throw new ExternalServiceException("Documenso API error on GET /envelope/" + templateId + ": " + e.getMessage(), e);
         }
-        return response.recipients();
     }
 
     private Map<String, Object> buildUsePayload(Agreement agreement, List<TemplateRecipient> templateRecipients) {
@@ -167,7 +180,9 @@ public class DocumensoServiceImpl implements DocumensoService {
     // ── Direct PDF-upload mode ─────────────────────────────────────────────────
 
     private String sendViaPdfUpload(Agreement agreement, byte[] pdfBytes) {
-        Objects.requireNonNull(pdfBytes, "pdfBytes required in direct (non-template) mode");
+        if (pdfBytes == null) {
+            throw new IllegalArgumentException("pdfBytes required in direct (non-template) mode");
+        }
         String envelopeId = createEnvelope(agreement, pdfBytes);
         distribute(envelopeId);
         return envelopeId;
@@ -185,16 +200,22 @@ public class DocumensoServiceImpl implements DocumensoService {
             }
         });
 
-        var response = documensoRestClient.post()
-                .uri("/envelope/create")
-                .contentType(MediaType.MULTIPART_FORM_DATA)
-                .body(body)
-                .retrieve()
-                .body(CreateEnvelopeResponse.class);
+        try {
+            var response = documensoRestClient.post()
+                    .uri("/envelope/create")
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(body)
+                    .retrieve()
+                    .body(CreateEnvelopeResponse.class);
 
-        Objects.requireNonNull(response, "Documenso /envelope/create returned null response");
-        log.debug("Envelope created: id={}", response.id());
-        return response.id();
+            if (response == null) {
+                throw new ExternalServiceException("Documenso /envelope/create returned null response");
+            }
+            log.debug("Envelope created: id={}", response.id());
+            return response.id();
+        } catch (RestClientException e) {
+            throw new ExternalServiceException("Documenso API error on /envelope/create: " + e.getMessage(), e);
+        }
     }
 
     private Map<String, Object> buildEnvelopePayload(Agreement agreement) {
@@ -259,14 +280,18 @@ public class DocumensoServiceImpl implements DocumensoService {
     }
 
     private void distribute(String envelopeId) {
-        documensoRestClient.post()
-                .uri("/envelope/distribute")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("envelopeId", envelopeId))
-                .retrieve()
-                .toBodilessEntity();
+        try {
+            documensoRestClient.post()
+                    .uri("/envelope/distribute")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("envelopeId", envelopeId))
+                    .retrieve()
+                    .toBodilessEntity();
 
-        log.debug("Envelope id={} distributed — signing invitations sent", envelopeId);
+            log.debug("Envelope id={} distributed — signing invitations sent", envelopeId);
+        } catch (RestClientException e) {
+            throw new ExternalServiceException("Documenso API error on /envelope/distribute: " + e.getMessage(), e);
+        }
     }
 
     // ── Download signed PDF ───────────────────────────────────────────────────
@@ -275,27 +300,34 @@ public class DocumensoServiceImpl implements DocumensoService {
     public byte[] downloadSignedPdf(String envelopeId) {
         log.info("Downloading signed PDF for envelopeId={}", envelopeId);
 
-        var envelope = documensoRestClient.get()
-                .uri("/envelope/" + envelopeId)
-                .retrieve()
-                .body(EnvelopeWithItems.class);
+        try {
+            var envelope = documensoRestClient.get()
+                    .uri("/envelope/" + envelopeId)
+                    .retrieve()
+                    .body(EnvelopeWithItems.class);
 
-        Objects.requireNonNull(envelope, "GET /envelope/" + envelopeId + " returned null");
+            if (envelope == null) {
+                throw new ExternalServiceException("Documenso GET /envelope/" + envelopeId + " returned null");
+            }
+            if (envelope.envelopeItems() == null || envelope.envelopeItems().isEmpty()) {
+                throw new ExternalServiceException("Documenso envelope " + envelopeId + " has no downloadable items");
+            }
 
-        if (envelope.envelopeItems() == null || envelope.envelopeItems().isEmpty()) {
-            throw new IllegalStateException("Envelope " + envelopeId + " has no items to download");
+            String itemId = envelope.envelopeItems().getFirst().id();
+
+            byte[] pdfBytes = documensoRestClient.get()
+                    .uri("/envelope/item/" + itemId + "/download?version=signed")
+                    .retrieve()
+                    .body(byte[].class);
+
+            if (pdfBytes == null) {
+                throw new ExternalServiceException("Documenso returned empty PDF for envelope item " + itemId);
+            }
+            log.info("Downloaded signed PDF: {} bytes for envelopeId={}", pdfBytes.length, envelopeId);
+            return pdfBytes;
+        } catch (RestClientException e) {
+            throw new ExternalServiceException("Documenso API error downloading envelope " + envelopeId + ": " + e.getMessage(), e);
         }
-
-        String itemId = envelope.envelopeItems().getFirst().id();
-
-        byte[] pdfBytes = documensoRestClient.get()
-                .uri("/envelope/item/" + itemId + "/download?version=signed")
-                .retrieve()
-                .body(byte[].class);
-
-        Objects.requireNonNull(pdfBytes, "Download of envelope item " + itemId + " returned null");
-        log.info("Downloaded signed PDF: {} bytes for envelopeId={}", pdfBytes.length, envelopeId);
-        return pdfBytes;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
