@@ -4,7 +4,7 @@ Gestor SaaS para automatizar el ciclo de vida de los **Convenios de Práctica Pr
 
 > Convenia cubre el flujo de la práctica de extremo a extremo: creación del borrador, validación por secretaría y coordinación, generación del PDF formal, firma electrónica vía **Documenso**, registro de visitas de seguimiento, evaluación 50 %/50 % entre Docente Asesor y Tutor Co-formador, y cierre con nota final.
 
-**Versión actual:** `0.6.0` — Backend MVP completo. Frontend Angular en desarrollo (repositorio `convenia-web/`).
+**Versión actual:** `0.8.0` — Backend MVP completo + normalización fase 1 (documentos extraídos a `agreement_documents`). Frontend Angular en desarrollo (repositorio `convenia-web/`).
 
 ---
 
@@ -108,24 +108,40 @@ com.uniremington.api.convenia
 
 ## Variables de entorno
 
-Todas las variables tienen un valor por defecto para desarrollo en `application.yml`. **Sobrescríbelas en producción** mediante variables de entorno o `.env`.
+Los secretos **no viven en `application.yml`**. Se cargan desde un archivo `.env` en la raíz del repo mediante `spring.config.import=optional:file:.env[.properties]`. Las variables sin default **son obligatorias**: la app aborta el arranque si faltan (fail-fast).
 
-| Variable | Descripción | Default (dev) |
-|----------|-------------|---------------|
-| `DB_HOST` / `DB_PORT` / `DB_NAME` | PostgreSQL | `localhost` / `5433` / `convenia-stagge-db` |
-| `DB_USER` / `DB_PASSWORD` | Credenciales PostgreSQL | `postgres` / `postgres` |
-| `SERVER_PORT` | Puerto HTTP del backend | `8080` |
-| `APP_JWT_SECRET` | Clave HMAC para firmar JWT (≥ 32 chars) | clave de dev — **rotar en prod** |
-| `APP_JWT_EXPIRATION` | Caducidad del JWT en ms | `86400000` (24 h) |
-| `APP_ALLOWED_ORIGINS` | Orígenes CORS permitidos (coma-separados) | `http://localhost:4200` y otros |
-| `DOCUMENSO_BASE_URL` | API de Documenso | `https://app.documenso.com/api/v2` |
-| `DOCUMENSO_TOKEN` | Bearer token de Documenso | — |
-| `DOCUMENSO_WEBHOOK_SECRET` | Secreto para verificar webhooks | vacío (sin verificación en dev) |
-| `DOCUMENSO_TEMPLATE_ID` | Plantilla de Documenso opcional. Vacío → genera PDF directo. | vacío |
-| `app.storage.endpoint-url` | Endpoint de R2 | hardcoded en `application.yml` |
-| `app.storage.access-key` / `secret-key` | Credenciales R2 | hardcoded en `application.yml` |
+### Setup local
 
-> ⚠️ **Seguridad:** las credenciales de R2 están en el YAML por conveniencia del MVP. Antes de ir a producción, muévelas a `${R2_ACCESS_KEY}` / `${R2_SECRET_KEY}` y rota las actuales.
+```bash
+cp .env.example .env       # plantilla checkeada a git
+# editar .env con tus valores reales
+```
+
+### Obligatorias (sin default — la app no arranca sin ellas)
+
+| Variable | Descripción |
+|----------|-------------|
+| `APP_JWT_SECRET` | Clave HMAC para firmar JWT (≥ 32 chars). Genera una con `openssl rand -base64 48`. |
+| `APP_STORAGE_ENDPOINT_URL` | Endpoint R2: `https://<account-id>.r2.cloudflarestorage.com` |
+| `APP_STORAGE_ACCESS_KEY` | Access key de R2 |
+| `APP_STORAGE_SECRET_KEY` | Secret key de R2 |
+| `DOCUMENSO_TOKEN` | Bearer token de la API Documenso v2 |
+
+### Opcionales (con default razonable)
+
+| Variable | Default | Descripción |
+|----------|---------|-------------|
+| `DB_HOST` / `DB_PORT` / `DB_NAME` | `localhost` / `5433` / `convenia-stagge-db` | Conexión PostgreSQL |
+| `DB_USER` / `DB_PASSWORD` | `postgres` / `postgres` | Credenciales PostgreSQL (dev local) |
+| `SERVER_PORT` | `8080` | Puerto HTTP del backend |
+| `APP_JWT_EXPIRATION` | `86400000` | Caducidad del JWT en ms (24 h) |
+| `APP_ALLOWED_ORIGINS` | `http://localhost:{8080,3000,4200}` | CORS allowed origins (coma-separados) |
+| `APP_STORAGE_BUCKET` | `convenia-docs` | Nombre del bucket R2 |
+| `DOCUMENSO_BASE_URL` | `https://app.documenso.com/api/v2` | API base URL de Documenso |
+| `DOCUMENSO_WEBHOOK_SECRET` | *(vacío)* | Secreto de firma del webhook. **Obligatorio en prod.** |
+| `DOCUMENSO_TEMPLATE_ID` | *(vacío)* | Si se setea, se usa la plantilla en lugar de generar el PDF. |
+
+> ⚠️ **Rotación pendiente:** las keys históricas del repo (R2 y Documenso) están visibles en commits anteriores al commit de limpieza y **deben rotarse antes de desplegar a producción**. Este cambio solo saca los literales del código actual.
 
 ---
 
@@ -136,7 +152,10 @@ Todas las variables tienen un valor por defecto para desarrollo en `application.
 git clone <repo-url>
 cd convenia
 
-# 2. Levantar PostgreSQL local (ejemplo con Docker)
+# 2. Crear el .env local (editar con tus valores reales)
+cp .env.example .env
+
+# 3. Levantar PostgreSQL local (ejemplo con Docker)
 docker run -d --name convenia-db \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=postgres \
@@ -144,10 +163,10 @@ docker run -d --name convenia-db \
   -p 5433:5432 \
   postgres:18
 
-# 3. Compilar y correr tests
+# 4. Compilar y correr tests
 ./mvnw clean verify
 
-# 4. Arrancar la aplicación (aplica Flyway automáticamente)
+# 5. Arrancar la aplicación (aplica Flyway automáticamente)
 ./mvnw spring-boot:run
 ```
 
@@ -182,6 +201,16 @@ Ubicación: `src/main/resources/db/migration/`. Convención: `V{major}.{minor}.{
 | `V1.0.5` | Revisión de la máquina de estados |
 | `V1.0.6` | Schema hardening — 10 índices nuevos (partial en `agreements(documenso_document_id)`, composites para dashboards), drop `idx_user_email` redundante, 3 CHECK constraints `NOT VALID` |
 | `V1.0.7` | `VALIDATE CONSTRAINT` de V1.0.6 + `users.full_name NOT NULL` con backfill en 4 etapas |
+| `V1.0.8` | `agreements.certificate_file_key VARCHAR(255) NULL` — cache R2 de la constancia |
+
+Las migraciones se aplican automáticamente al arrancar Spring (`spring.flyway.enabled: true`). Para ejecutar el plugin Maven manualmente (p. ej. `flyway:info`, `flyway:clean`), pasa las credenciales por línea de comandos — el `pom.xml` **ya no contiene** `flyway.url`/`user`/`password`:
+
+```bash
+./mvnw flyway:info \
+  -Dflyway.url=jdbc:postgresql://localhost:5433/convenia-stagge-db \
+  -Dflyway.user=postgres \
+  -Dflyway.password=postgres
+```
 
 **Diferido post-MVP:** migración a `TIMESTAMPTZ` en las 8 tablas (requiere `LocalDateTime` → `Instant` en `AuditableEntity` y `spring.jpa.properties.hibernate.jdbc.time_zone=UTC`).
 

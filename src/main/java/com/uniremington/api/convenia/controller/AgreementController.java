@@ -1,6 +1,7 @@
 package com.uniremington.api.convenia.controller;
 
 import com.uniremington.api.convenia.model.dto.*;
+import com.uniremington.api.convenia.model.entity.DocumentType;
 import com.uniremington.api.convenia.model.vo.JwtUser;
 import com.uniremington.api.convenia.service.AgreementService;
 import com.uniremington.api.convenia.service.DocumensoService;
@@ -295,13 +296,28 @@ public class AgreementController {
         return ResponseEntity.ok(agreementService.uploadDocument(id, type, file, currentUser));
     }
 
+    @Operation(summary = "List uploaded documents",
+            description = "Returns the metadata of every document uploaded against the agreement. "
+                    + "Use GET /{id}/documents/{type} to download the bytes. "
+                    + "Authorization is enforced per-agreement in the service layer.")
+    @ApiResponse(responseCode = "200", description = "Document metadata")
+    @GetMapping("/{id}/documents")
+    @PreAuthorize("hasAnyRole('STUDENT', 'COMPANY_TUTOR', 'ACADEMIC_ADVISOR', 'COORDINATOR', 'SECRETARY', 'ADMIN')")
+    public ResponseEntity<List<AgreementDocumentResponse>> listDocuments(
+            @PathVariable Long id,
+            @AuthenticationPrincipal JwtUser currentUser) {
+        return ResponseEntity.ok(agreementService.listDocuments(id, currentUser));
+    }
+
     @Operation(summary = "Download uploaded document",
-            description = "Downloads a document previously uploaded to R2 (CV, NIT, RUT, CONTRACT, etc.)")
+            description = "Downloads a document previously uploaded to R2 (CV, NIT, RUT, CONTRACT, etc.). "
+                    + "Authorization is enforced per-agreement in the service layer.")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "File returned"),
             @ApiResponse(responseCode = "404", description = "Document not yet uploaded")
     })
     @GetMapping("/{id}/documents/{type}")
+    @PreAuthorize("hasAnyRole('STUDENT', 'COMPANY_TUTOR', 'ACADEMIC_ADVISOR', 'COORDINATOR', 'SECRETARY', 'ADMIN')")
     public ResponseEntity<byte[]> downloadUploadedDocument(
             @PathVariable Long id,
             @PathVariable DocumentType type,
@@ -341,6 +357,36 @@ public class AgreementController {
         headers.setContentType(MediaType.APPLICATION_PDF);
         headers.setContentDisposition(ContentDisposition.attachment()
                 .filename("convenio_practica_" + id + ".pdf")
+                .build());
+
+        return ResponseEntity.ok().headers(headers).body(pdf);
+    }
+
+    // ── Certificate of completion ────────────────────────────────────────────
+
+    @Operation(summary = "Download certificate of completion",
+            description = "Issues the 'Constancia de Culminación' for a FINISHED agreement. "
+                    + "Generated once per agreement and cached in R2. Accessible to the owning "
+                    + "student, the assigned advisor/tutor, coordinators of the same university, "
+                    + "and ADMIN.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "PDF returned"),
+            @ApiResponse(responseCode = "403", description = "Not authorized for this agreement"),
+            @ApiResponse(responseCode = "409", description = "Agreement is not in FINISHED status"),
+            @ApiResponse(responseCode = "404", description = "Agreement not found")
+    })
+    @GetMapping("/{id}/certificate")
+    @PreAuthorize("hasAnyRole('STUDENT', 'ACADEMIC_ADVISOR', 'COMPANY_TUTOR', 'COORDINATOR', 'ADMIN')")
+    public ResponseEntity<byte[]> downloadCertificate(
+            @PathVariable Long id,
+            @AuthenticationPrincipal JwtUser currentUser) {
+
+        byte[] pdf = agreementService.downloadCertificate(id, currentUser);
+
+        var headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentDisposition(ContentDisposition.attachment()
+                .filename("constancia_" + id + ".pdf")
                 .build());
 
         return ResponseEntity.ok().headers(headers).body(pdf);

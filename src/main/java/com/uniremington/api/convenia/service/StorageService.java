@@ -19,4 +19,12 @@ public interface StorageService {
      * @return Raw file bytes.
      */
     byte[] download(String key);
+
+    /**
+     * Deletes an object from R2 by its storage key. No-op if the object
+     * does not exist (S3-compatible DELETE is idempotent).
+     *
+     * @param key The full R2 object key (path).
+     */
+    void delete(String key);
 }

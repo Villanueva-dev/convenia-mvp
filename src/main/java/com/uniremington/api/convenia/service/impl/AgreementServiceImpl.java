@@ -37,6 +37,7 @@ import java.util.UUID;
 public class AgreementServiceImpl implements AgreementService {
 
     private final AgreementRepository               agreementRepository;
+    private final AgreementDocumentRepository       agreementDocumentRepository;
     private final StudentRepository                 studentRepository;
     private final CompanyRepository                 companyRepository;
     private final UserRepository                    userRepository;
@@ -427,38 +428,114 @@ public class AgreementServiceImpl implements AgreementService {
         if (originalName != null && originalName.contains(".")) {
             ext = originalName.substring(originalName.lastIndexOf('.'));
         }
-        String key = "agreements/" + id + "/" + type.name().toLowerCase() + "/" + UUID.randomUUID() + ext;
-        storageService.upload(key, file.getContentType(), file.getBytes());
+        String newKey = "agreements/" + id + "/" + type.name().toLowerCase() + "/" + UUID.randomUUID() + ext;
 
-        switch (type) {
-            case CV              -> agreement.setCvFileKey(key);
-            case CONTRACT        -> agreement.setContractFileKey(key);
-            case NATIONAL_ID     -> agreement.setNationalIdFileKey(key);
-            case EPS             -> agreement.setEpsFileKey(key);
-            case ARL             -> agreement.setArlFileKey(key);
-            case WORK_PLAN       -> agreement.setWorkPlanFileKey(key);
-            case NIT             -> agreement.setNitFileKey(key);
-            case RUT             -> agreement.setRutFileKey(key);
-            case CAMARA_COMERCIO -> agreement.setCamaraComercioFileKey(key);
+        // If a previous document of this type exists, remember its key so we
+        // can delete the stale R2 object *after* the upsert succeeds. This
+        // minimizes the window where we could end up with an orphan AND lose
+        // the active one.
+        String previousKey = agreementDocumentRepository
+                .findByAgreementIdAndDocumentType(id, type)
+                .map(AgreementDocument::getFileKey)
+                .orElse(null);
+
+        storageService.upload(newKey, file.getContentType(), file.getBytes());
+
+        agreementDocumentRepository.upsert(
+                id,
+                type.name(),
+                newKey,
+                file.getContentType(),
+                originalName,
+                file.getSize(),
+                currentUser.getUserId()
+        );
+
+        if (previousKey != null && !previousKey.equals(newKey)) {
+            try {
+                storageService.delete(previousKey);
+            } catch (RuntimeException ex) {
+                // Orphan in R2 is preferable to failing the request after the
+                // new document is already persisted. Log and move on.
+                log.warn("Failed to delete previous R2 object {} after re-upload of {} for agreement {}: {}",
+                        previousKey, type, id, ex.getMessage());
+            }
         }
 
-        return agreementMapper.toResponse(agreementRepository.save(agreement));
+        log.info("Document {} uploaded for agreement id={} by user={} (key={})",
+                type, id, currentUser.getUserId(), newKey);
+        return agreementMapper.toResponse(agreement);
     }
 
-    // ── Document download ─────────────────────────────────────────────────────
+    // ── Document listing / download ───────────────────────────────────────────
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<AgreementDocumentResponse> listDocuments(Long id, JwtUser currentUser) {
+        var agreement = loadAgreement(id);
+        assertDocumentAccess(agreement, currentUser);
+
+        return agreementDocumentRepository.findAllByAgreementId(id).stream()
+                .map(doc -> new AgreementDocumentResponse(
+                        doc.getId(),
+                        doc.getDocumentType(),
+                        doc.getContentType(),
+                        doc.getOriginalName(),
+                        doc.getFileSizeBytes(),
+                        doc.getUploadedBy() != null ? doc.getUploadedBy().getId() : null,
+                        doc.getUpdatedAt()
+                ))
+                .toList();
+    }
 
     @Override
     @Transactional(readOnly = true)
     public byte[] downloadDocument(Long id, DocumentType type, JwtUser currentUser) {
         var agreement = loadAgreement(id);
-        assertTenantAccess(agreement, currentUser);
+        assertDocumentAccess(agreement, currentUser);
 
-        String key = fileKeyFor(agreement, type);
-        if (key == null) {
-            throw new ResourceNotFoundException(
-                    "Document " + type.name() + " has not been uploaded for agreement " + id);
+        var document = agreementDocumentRepository
+                .findByAgreementIdAndDocumentType(id, type)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Document " + type.name() + " has not been uploaded for agreement " + id));
+        return storageService.download(document.getFileKey());
+    }
+
+    // ── Certificate (Constancia de Culminación) ───────────────────────────────
+
+    private static final String CERTIFICATE_CONTENT_TYPE = "application/pdf";
+    private static final String CERTIFICATE_KEY_PREFIX   = "certificates/";
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p><strong>Concurrency note (accepted MVP trade-off):</strong> two concurrent
+     * first-time requests for the same agreement may both miss the cache, generate
+     * two PDFs and upload twice to the same R2 key. The key is deterministic
+     * ({@code certificates/{univId}/{agreementId}.pdf}) so last-write-wins leaves
+     * a consistent cached object. TODO post-MVP: guard with
+     * {@code @Lock(LockModeType.PESSIMISTIC_WRITE)} to avoid double render + upload.</p>
+     */
+    @Override
+    @Transactional
+    public byte[] downloadCertificate(Long id, JwtUser currentUser) {
+        var agreement = loadAgreement(id);
+        assertCertificateAccess(agreement, currentUser);
+        assertStatus(agreement, AgreementStatus.FINISHED,
+                "Certificate is only available once the agreement is FINISHED");
+
+        if (agreement.getCertificateFileKey() != null) {
+            return storageService.download(agreement.getCertificateFileKey());
         }
-        return storageService.download(key);
+
+        byte[] pdf = pdfGenerationService.generateCertificatePdf(agreement);
+        String key = CERTIFICATE_KEY_PREFIX
+                + agreement.getUniversity().getId() + "/" + agreement.getId() + ".pdf";
+        storageService.upload(key, CERTIFICATE_CONTENT_TYPE, pdf);
+        agreement.setCertificateFileKey(key);
+        agreementRepository.save(agreement);
+        log.info("Certificate generated and cached for agreement id={}, key={}", id, key);
+        return pdf;
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -500,6 +577,86 @@ public class AgreementServiceImpl implements AgreementService {
         if ("STUDENT".equals(user.getRole()) &&
                 !agreement.getStudent().getUser().getId().equals(user.getUserId())) {
             throw new AccessDeniedException("You can only access your own agreements");
+        }
+    }
+
+    /**
+     * Per-role access control for reading uploaded documents (listing / download).
+     *
+     * <p>ADMIN bypasses tenancy. Other roles must be in the same tenant. Beyond
+     * tenant:</p>
+     * <ul>
+     *   <li>COORDINATOR and SECRETARY — allowed (they review documents).</li>
+     *   <li>STUDENT — only the agreement's owner.</li>
+     *   <li>ACADEMIC_ADVISOR / COMPANY_TUTOR — only if assigned to this agreement.</li>
+     *   <li>Any other role — denied.</li>
+     * </ul>
+     */
+    private void assertDocumentAccess(Agreement agreement, JwtUser user) {
+        if ("ADMIN".equals(user.getRole())) {
+            return;
+        }
+        assertTenantAccess(agreement, user);
+
+        switch (user.getRole()) {
+            case "COORDINATOR", "SECRETARY" -> { /* allowed within tenant */ }
+            case "STUDENT" -> {
+                if (!agreement.getStudent().getUser().getId().equals(user.getUserId())) {
+                    throw new AccessDeniedException("You can only access documents of your own agreements");
+                }
+            }
+            case "ACADEMIC_ADVISOR" -> {
+                if (agreement.getAcademicAdvisor() == null ||
+                        !agreement.getAcademicAdvisor().getId().equals(user.getUserId())) {
+                    throw new AccessDeniedException("You are not the assigned advisor for this agreement");
+                }
+            }
+            case "COMPANY_TUTOR" -> {
+                if (agreement.getCompanyRep() == null ||
+                        !agreement.getCompanyRep().getId().equals(user.getUserId())) {
+                    throw new AccessDeniedException("You are not the assigned tutor for this agreement");
+                }
+            }
+            default -> throw new AccessDeniedException(
+                    "Role " + user.getRole() + " cannot access agreement documents");
+        }
+    }
+
+    /**
+     * Per-role access control for the certificate of completion.
+     *
+     * <p>ADMIN bypasses tenancy; any other role must belong to the same university.
+     * Beyond tenancy: STUDENT must own the agreement; ACADEMIC_ADVISOR and
+     * COMPANY_TUTOR must be the ones assigned to the agreement; COORDINATOR
+     * has access across its tenant. Every other role (e.g. SECRETARY) is denied.</p>
+     */
+    private void assertCertificateAccess(Agreement agreement, JwtUser user) {
+        if ("ADMIN".equals(user.getRole())) {
+            return;
+        }
+        assertTenantAccess(agreement, user);
+
+        switch (user.getRole()) {
+            case "COORDINATOR" -> { /* allowed within tenant */ }
+            case "STUDENT" -> {
+                if (!agreement.getStudent().getUser().getId().equals(user.getUserId())) {
+                    throw new AccessDeniedException("You can only download your own certificate");
+                }
+            }
+            case "ACADEMIC_ADVISOR" -> {
+                if (agreement.getAcademicAdvisor() == null ||
+                        !agreement.getAcademicAdvisor().getId().equals(user.getUserId())) {
+                    throw new AccessDeniedException("You are not the assigned advisor for this agreement");
+                }
+            }
+            case "COMPANY_TUTOR" -> {
+                if (agreement.getCompanyRep() == null ||
+                        !agreement.getCompanyRep().getId().equals(user.getUserId())) {
+                    throw new AccessDeniedException("You are not the assigned tutor for this agreement");
+                }
+            }
+            default -> throw new AccessDeniedException(
+                    "Role " + user.getRole() + " cannot download the certificate");
         }
     }
 
@@ -570,20 +727,6 @@ public class AgreementServiceImpl implements AgreementService {
                 .notes(notes)
                 .build();
         statusHistoryRepository.save(history);
-    }
-
-    private String fileKeyFor(Agreement agreement, DocumentType type) {
-        return switch (type) {
-            case CV              -> agreement.getCvFileKey();
-            case CONTRACT        -> agreement.getContractFileKey();
-            case NATIONAL_ID     -> agreement.getNationalIdFileKey();
-            case EPS             -> agreement.getEpsFileKey();
-            case ARL             -> agreement.getArlFileKey();
-            case WORK_PLAN       -> agreement.getWorkPlanFileKey();
-            case NIT             -> agreement.getNitFileKey();
-            case RUT             -> agreement.getRutFileKey();
-            case CAMARA_COMERCIO -> agreement.getCamaraComercioFileKey();
-        };
     }
 
     private void validateDates(java.time.LocalDate startDate, java.time.LocalDate endDate,

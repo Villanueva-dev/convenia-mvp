@@ -1,6 +1,7 @@
 package com.uniremington.api.convenia.service;
 
 import com.uniremington.api.convenia.model.dto.*;
+import com.uniremington.api.convenia.model.entity.DocumentType;
 import com.uniremington.api.convenia.model.vo.JwtUser;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -187,6 +188,17 @@ public interface AgreementService {
             throws IOException;
 
     /**
+     * Lists the metadata of all documents uploaded for a given agreement.
+     *
+     * <p>Tenant access is enforced; STUDENT users only see their own agreements.</p>
+     *
+     * @param id          Agreement unique identifier.
+     * @param currentUser Authenticated user.
+     * @return List of document metadata; empty if nothing has been uploaded yet.
+     */
+    List<AgreementDocumentResponse> listDocuments(Long id, JwtUser currentUser);
+
+    /**
      * Downloads a previously uploaded document from Cloudflare R2.
      *
      * <p>Any authenticated user with tenant access can download documents —
@@ -199,4 +211,23 @@ public interface AgreementService {
      * @throws com.uniremington.api.convenia.shared.exception.ResourceNotFoundException if the document has not been uploaded yet.
      */
     byte[] downloadDocument(Long id, DocumentType type, JwtUser currentUser);
+
+    /**
+     * Downloads the "Constancia de Culminación" PDF for a FINISHED agreement.
+     *
+     * <p>Generates the PDF on the first request and caches it in Cloudflare R2
+     * keyed as {@code certificates/{universityId}/{agreementId}.pdf}.
+     * Subsequent requests serve the cached object directly.</p>
+     *
+     * <p>Access is restricted to the agreement's student (owner), its assigned
+     * academic advisor, its assigned company tutor, any coordinator within the
+     * same university, and any ADMIN.</p>
+     *
+     * @param id          Agreement unique identifier.
+     * @param currentUser Authenticated user (access enforced per role).
+     * @return Raw PDF bytes.
+     * @throws IllegalStateException  if the agreement is not in FINISHED status.
+     * @throws org.springframework.security.access.AccessDeniedException if the user is not authorized for this agreement.
+     */
+    byte[] downloadCertificate(Long id, JwtUser currentUser);
 }

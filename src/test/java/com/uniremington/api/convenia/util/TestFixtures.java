@@ -111,8 +111,6 @@ public class TestFixtures {
                 40, new BigDecimal("1160000"),
                 "EVALUATION", null, null, null,   // status, rejectionReason, documensoDocumentId, pdfCloudUrl
                 null, null, null,                  // advisorGrade, companyGrade, finalGrade
-                null, null, null, null, null, null, // cvFileKey..workPlanFileKey
-                null, null, null,                  // nitFileKey, rutFileKey, camaraComercioFileKey
                 LocalDateTime.now(), LocalDateTime.now()
         );
     }

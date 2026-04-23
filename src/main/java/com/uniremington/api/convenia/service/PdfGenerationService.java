@@ -19,4 +19,16 @@ public interface PdfGenerationService {
      * @throws RuntimeException if template processing or PDF conversion fails.
      */
     byte[] generateAgreementPdf(Agreement agreement);
+
+    /**
+     * Generates the "Constancia de Culminación" PDF issued by the university
+     * once the agreement reaches {@code FINISHED}. Includes student, company,
+     * advisor and tutor names, practice dates, total hours and final grade,
+     * citing Resolución CF 002-2024 Art. §761.
+     *
+     * @param agreement A FINISHED agreement with both grades and finalGrade populated.
+     * @return Raw PDF bytes.
+     * @throws RuntimeException if template processing or PDF conversion fails.
+     */
+    byte[] generateCertificatePdf(Agreement agreement);
 }

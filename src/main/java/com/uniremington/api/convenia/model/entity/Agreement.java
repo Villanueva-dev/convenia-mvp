@@ -201,56 +201,14 @@ public class Agreement extends AuditableEntity {
     @Column(columnDefinition = "TEXT")
     private String rejectionReason;
 
-    // ── Document management (Cloudflare R2 / S3 file keys) ───────────────────
-
-    /**
-     * S3/R2 file key for the student's curriculum vitae (CV).
-     * Required during the first month of the active practice.
-     */
-    private String cvFileKey;
-
-    /**
-     * S3/R2 file key for the scanned labor or apprenticeship contract.
-     */
-    private String contractFileKey;
-
-    /**
-     * S3/R2 file key for the student's national ID copy (cédula).
-     */
-    private String nationalIdFileKey;
-
-    /**
-     * S3/R2 file key for the student's health insurance certificate (EPS).
-     */
-    private String epsFileKey;
-
-    /**
-     * S3/R2 file key for the occupational risk insurance certificate (ARL).
-     */
-    private String arlFileKey;
-
-    /**
-     * S3/R2 file key for the approved internship work plan.
-     */
-    private String workPlanFileKey;
-
-    /**
-     * S3/R2 file key for the company's NIT certificate.
-     * Uploaded by the company tutor during DRAFT stage.
-     */
-    private String nitFileKey;
-
-    /**
-     * S3/R2 file key for the company's RUT document.
-     * Uploaded by the company tutor during DRAFT stage.
-     */
-    private String rutFileKey;
-
-    /**
-     * S3/R2 file key for the company's Cámara de Comercio certificate.
-     * Uploaded by the company tutor during DRAFT stage.
-     */
-    private String camaraComercioFileKey;
+    // ── Uploaded documents ────────────────────────────────────────────────────
+    //
+    // As of V1.1.0, user-uploaded document file keys (CV, CONTRACT,
+    // NATIONAL_ID, EPS, ARL, WORK_PLAN, NIT, RUT, CAMARA_COMERCIO) live in the
+    // `agreement_documents` table (entity: AgreementDocument). They are
+    // accessed through AgreementDocumentRepository and exposed via the
+    // /agreements/{id}/documents endpoints. System artefacts such as the
+    // signed PDF and the completion certificate remain on this entity (below).
 
     // ── Documenso integration ─────────────────────────────────────────────────
 
@@ -289,4 +247,12 @@ public class Agreement extends AuditableEntity {
      */
     @Column(precision = 3, scale = 1)
     private BigDecimal finalGrade;
+
+    /**
+     * R2 storage key of the generated "Constancia de Culminación" PDF.
+     * Populated on the first {@code GET /agreements/{id}/certificate} request
+     * for a FINISHED agreement; subsequent requests serve the cached object.
+     */
+    @Column(name = "certificate_file_key")
+    private String certificateFileKey;
 }

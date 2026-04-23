@@ -15,6 +15,7 @@ import org.thymeleaf.context.Context;
 import java.io.ByteArrayOutputStream;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 
 @Slf4j
 @Service
@@ -27,10 +28,18 @@ public class PdfGenerationServiceImpl implements PdfGenerationService {
 
     @Override
     public byte[] generateAgreementPdf(Agreement agreement) {
-        log.info("Generating PDF for agreement id={}", agreement.getId());
+        log.info("Generating agreement PDF for id={}", agreement.getId());
+        return renderPdf("convenio_practica", buildTemplateContext(agreement), agreement.getId());
+    }
 
-        var ctx = buildTemplateContext(agreement);
-        String html = templateEngine.process("convenio_practica", ctx);
+    @Override
+    public byte[] generateCertificatePdf(Agreement agreement) {
+        log.info("Generating certificate PDF for agreement id={}", agreement.getId());
+        return renderPdf("constancia_culminacion", buildCertificateContext(agreement), agreement.getId());
+    }
+
+    private byte[] renderPdf(String templateName, Context ctx, Long agreementId) {
+        String html = templateEngine.process(templateName, ctx);
 
         try (var outputStream = new ByteArrayOutputStream()) {
             var builder = new PdfRendererBuilder();
@@ -40,12 +49,13 @@ public class PdfGenerationServiceImpl implements PdfGenerationService {
             builder.run();
 
             byte[] pdfBytes = outputStream.toByteArray();
-            log.info("PDF generated for agreement id={}, size={} bytes", agreement.getId(), pdfBytes.length);
+            log.info("PDF '{}' rendered for agreement id={}, size={} bytes",
+                    templateName, agreementId, pdfBytes.length);
             return pdfBytes;
 
         } catch (Exception e) {
             throw new RuntimeException(
-                    "Failed to generate PDF for agreement id=" + agreement.getId(), e);
+                    "Failed to render PDF '" + templateName + "' for agreement id=" + agreementId, e);
         }
     }
 
@@ -126,5 +136,54 @@ public class PdfGenerationServiceImpl implements PdfGenerationService {
 
     private String formatDate(LocalDate date) {
         return date != null ? date.format(DATE_FORMATTER) : "";
+    }
+
+    private Context buildCertificateContext(Agreement agreement) {
+        var ctx = new Context();
+
+        ctx.setVariable("agreementId",     agreement.getId());
+        ctx.setVariable("universityName",  agreement.getUniversity().getName());
+        ctx.setVariable("companyName",     agreement.getCompany().getLegalName());
+        ctx.setVariable("companyNit",      agreement.getCompany().getNit());
+
+        var student = agreement.getStudent();
+        ctx.setVariable("studentName",     student.getFullName());
+        ctx.setVariable("studentId",       student.getDocumentNumber());
+        ctx.setVariable("programName",     student.getAcademicProgram().getName());
+
+        ctx.setVariable("practiceModalityLabel",  modalityLabel(agreement.getPracticeModality()));
+        ctx.setVariable("practiceComponentLabel", componentLabel(agreement.getPracticeComponent()));
+
+        LocalDate start = agreement.getStartDate();
+        LocalDate end   = agreement.getEndDate();
+        ctx.setVariable("startDate", formatDate(start));
+        ctx.setVariable("endDate",   formatDate(end));
+        ctx.setVariable("weeklyHours", agreement.getWeeklyHours());
+
+        // Total hours: weeks between dates × weeklyHours.
+        long totalHours = 0L;
+        if (start != null && end != null && agreement.getWeeklyHours() != null) {
+            long days = ChronoUnit.DAYS.between(start, end.plusDays(1));
+            double weeks = days / 7.0;
+            totalHours = Math.round(weeks * agreement.getWeeklyHours());
+        }
+        ctx.setVariable("totalHours", totalHours);
+
+        ctx.setVariable("advisorGrade", agreement.getAdvisorGrade());
+        ctx.setVariable("companyGrade", agreement.getCompanyGrade());
+        ctx.setVariable("finalGrade",   agreement.getFinalGrade());
+
+        if (agreement.getAcademicAdvisor() != null) {
+            ctx.setVariable("advisorName",  agreement.getAcademicAdvisor().getFullName());
+            ctx.setVariable("advisorEmail", agreement.getAcademicAdvisor().getEmail());
+        }
+        if (agreement.getCompanyRep() != null) {
+            ctx.setVariable("companyTutorName",  agreement.getCompanyRep().getFullName());
+            ctx.setVariable("companyTutorEmail", agreement.getCompanyRep().getEmail());
+        }
+
+        ctx.setVariable("issueDate", formatDate(LocalDate.now()));
+
+        return ctx;
     }
 }

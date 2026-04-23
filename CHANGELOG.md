@@ -1,5 +1,242 @@
 # Convenia API — Changelog
 
+## [0.8.0] — 2026-04-23
+
+### Contexto
+Primer paso de normalización de la base de datos. La tabla `agreements` acumulaba 9 columnas `*_file_key` dispersas que violaban 1NF y forzaban un switch duplicado en el service. Esta versión las extrae a una tabla normalizada y endurece la autorización de documentos.
+
+---
+
+### Nueva tabla `agreement_documents` (V1.1.0)
+
+**Por qué:** 9 columnas de file_key en `agreements` (CV, CONTRACT, NATIONAL_ID, EPS, ARL, WORK_PLAN, NIT, RUT, CAMARA_COMERCIO) son atributos repetidos — 1NF. Cada upload obligaba a `save(agreement)` sobre una entidad con 38 columnas, y el mapeo `DocumentType → campo` estaba duplicado entre `uploadDocument` (líneas 433-443) y el helper `fileKeyFor` (650-662).
+
+**Schema (validado con `database-reviewer`):**
+
+```sql
+CREATE TABLE agreement_documents (
+    id              BIGSERIAL    PRIMARY KEY,
+    agreement_id    BIGINT       NOT NULL REFERENCES agreements(id) ON DELETE CASCADE,
+    document_type   VARCHAR(32)  NOT NULL,
+    file_key        VARCHAR(500) NOT NULL,
+    content_type    VARCHAR(100),
+    original_name   VARCHAR(255),
+    file_size_bytes BIGINT,
+    uploaded_by_id  BIGINT       NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at      TIMESTAMP    NOT NULL,
+    updated_at      TIMESTAMP    NOT NULL,
+    CONSTRAINT chk_document_type CHECK (document_type IN ('CV','CONTRACT','NATIONAL_ID','EPS','ARL','WORK_PLAN','NIT','RUT','CAMARA_COMERCIO')),
+    CONSTRAINT uk_agreement_documents UNIQUE (agreement_id, document_type)
+);
+CREATE INDEX idx_agreement_documents_uploaded_by_id ON agreement_documents(uploaded_by_id);
+```
+
+- `UNIQUE (agreement_id, document_type)` — una fila viva por tipo; re-upload hace UPSERT.
+- `chk_document_type` — CHECK consistente con el patrón del proyecto (mismo estilo que `status`, `role`, `practice_modality`).
+- No se creó `idx_agreement_documents_agreement_id`: el UK ya lo cubre como leftmost prefix.
+- No `DEFAULT CURRENT_TIMESTAMP` en timestamps: coherente con el resto del schema (JPA puebla vía `@CreatedDate`/`@LastModifiedDate`).
+
+**Migración atómica:** la V1.1.0 hace `CREATE + INSERT ... SELECT (UNION ALL)` copiando desde las 9 columnas (student docs → `student.user_id`, company docs → `agreements.company_rep_id`) + `DROP COLUMN` de las 9 columnas de `agreements`. PostgreSQL DDL es transaccional: si algo falla, revierte todo.
+
+---
+
+### Upsert atómico `ON CONFLICT DO UPDATE`
+
+**Por qué:** el flujo anterior era find-then-set-then-save: leía el field, lo sobreescribía, y guardaba. Con dos requests concurrentes del mismo tipo había una ventana TOCTOU donde ambos podían "ganar". Ahora el patrón es una única sentencia atómica a nivel DB.
+
+```sql
+INSERT INTO agreement_documents (...) VALUES (...)
+ON CONFLICT ON CONSTRAINT uk_agreement_documents
+DO UPDATE SET file_key        = EXCLUDED.file_key,
+              content_type    = EXCLUDED.content_type,
+              original_name   = EXCLUDED.original_name,
+              file_size_bytes = EXCLUDED.file_size_bytes,
+              uploaded_by_id  = EXCLUDED.uploaded_by_id,
+              updated_at      = CURRENT_TIMESTAMP
+```
+
+Implementado como `@Modifying @Query(nativeQuery=true)` en `AgreementDocumentRepository.upsert(...)`. Elimina `DataIntegrityViolationException` visible al usuario en colisiones.
+
+---
+
+### Autorización endurecida de documentos
+
+**Por qué:** el `downloadDocument` anterior solo llamaba `assertTenantAccess` — cualquier usuario del mismo tenant podía descargar documentos de cualquier agreement (IDOR). Además, `listDocuments` nuevo no tenía `@PreAuthorize` y habría expuesto metadata sin restricciones por rol. Detectados por `security-reviewer`.
+
+**Nuevo helper `assertDocumentAccess(Agreement, JwtUser)`:**
+
+| Rol | Regla |
+|-----|-------|
+| `ADMIN` | Cross-tenant, pasa |
+| `COORDINATOR`, `SECRETARY` | Tenant-local |
+| `STUDENT` | Solo si es dueño del agreement |
+| `ACADEMIC_ADVISOR` | Solo si está asignado al agreement |
+| `COMPANY_TUTOR` | Solo si está asignado al agreement |
+| Resto | `AccessDeniedException` |
+
+Aplicado a `listDocuments` **y** `downloadDocument`. En `uploadDocument` la lógica previa (por rol + estado + ownership) se mantuvo.
+
+**`@PreAuthorize` añadido** en los 2 endpoints `GET /{id}/documents` y `GET /{id}/documents/{type}` que antes no lo tenían.
+
+**`fileKey` removido del `AgreementDocumentResponse`:** exponerlo permitía enumerar keys R2 (patrón `agreements/{id}/{type}/{uuid}.{ext}` es deterministico). El frontend descarga bytes por el endpoint tipado, nunca usa el key directo.
+
+---
+
+### Nuevo endpoint `GET /agreements/{id}/documents`
+
+Lista metadata de todos los documentos subidos (sin `fileKey`). El frontend lo consulta para saber qué tipos ya están arriba sin necesidad de leerlos todos uno por uno.
+
+**Response (`AgreementDocumentResponse`):**
+```json
+{
+  "id": 7,
+  "documentType": "CV",
+  "contentType": "application/pdf",
+  "originalName": "cv.pdf",
+  "fileSizeBytes": 1024,
+  "uploadedById": 30,
+  "uploadedAt": "2026-04-23T15:31:39"
+}
+```
+
+---
+
+### Re-upload borra el archivo R2 anterior
+
+**Por qué:** antes, al re-subir un doc (p. ej. CV rechazado), el `file_key` anterior se sobrescribía en la BD y el objeto R2 viejo quedaba huérfano creciendo el bucket indefinidamente.
+
+**Ahora:** `uploadDocument` lee el `previousKey` antes del upload → sube el archivo nuevo → upsert en DB → `storageService.delete(previousKey)`. Si el delete falla, se loggea como warning y no se propaga (orphan tolerable; fallar la request después de persistir el nuevo doc sería peor).
+
+**`StorageService.delete(String)`** — nuevo método, implementado en `R2StorageServiceImpl` con `s3Client.deleteObject(DeleteObjectRequest)`.
+
+---
+
+### AgreementResponse más limpio
+
+Los 9 campos `*FileKey` fueron retirados del DTO. La fuente de verdad de "¿qué documentos hay?" es el endpoint `GET /documents` (metadata) o `GET /documents/{type}` (bytes).
+
+---
+
+### Cambios de código
+
+**Creados:**
+- `model/entity/AgreementDocument.java` — entidad JPA que extiende `AuditableEntity`.
+- `model/entity/DocumentType.java` — movido desde `model/dto/`; ahora es valor persistido.
+- `repository/AgreementDocumentRepository.java` — CRUD + `findByAgreementIdAndDocumentType` + `findAllByAgreementId` + `upsert` nativo.
+- `model/dto/AgreementDocumentResponse.java` — DTO sin `fileKey`.
+- `db/migration/V1.1.0__Extract_agreement_documents.sql`.
+
+**Modificados:**
+- `model/entity/Agreement.java` — eliminados los 9 `*FileKey`.
+- `model/dto/AgreementResponse.java` — eliminados los 9 `*FileKey` del record.
+- `service/AgreementService.java` — nuevo `listDocuments`; `downloadDocument` ahora queries.
+- `service/impl/AgreementServiceImpl.java` — reescrito `uploadDocument` (upsert + delete R2 previo); reescrito `downloadDocument`; nuevo `listDocuments`; nuevo helper `assertDocumentAccess`; eliminado helper `fileKeyFor`.
+- `service/StorageService.java` + `service/impl/R2StorageServiceImpl.java` — nuevo `delete(String)`.
+- `controller/AgreementController.java` — nuevo endpoint `GET /documents`; `@PreAuthorize` añadido a listar + descargar.
+- `util/TestFixtures.java` — ajuste de `dummyAgreementResponse` (ya no tiene los 9 nulls).
+
+---
+
+### Tests
+
+**50 → 67** (+17). 0 fallos.
+
+- `UploadDocument` (8): happy path, re-upload con delete R2, fallo de delete R2 no-bloqueante, fallo R2 antes del upsert (verifica no-orphan-DB), student bloqueado para NIT, tutor no asignado denegado, estado incorrecto denegado, cross-tenant denegado.
+- `DownloadDocumentTests` (5): happy path, 404 si no subido, cross-tenant denegado, **student no-owner denegado (regression para el IDOR que reportó security-reviewer)**, tutor no asignado denegado.
+- `ListDocumentsTests` (4): owner student, coordinator del mismo tenant, tutor no asignado denegado, cross-tenant denegado.
+
+---
+
+### Revisores automáticos
+
+- `database-reviewer` durante el plan: sugirió retirar índice redundante + usar `ON CONFLICT` para upsert.
+- `java-reviewer` post-implementación: detectó tradeoff pre-existente de `@Transactional` con upload R2 (aceptado como deuda); sugirió test de R2-fail antes del upsert (añadido).
+- `security-reviewer` post-implementación: detectó **3 majors** — IDOR en `downloadDocument`, `listDocuments` sin `@PreAuthorize`, `fileKey` expuesto en response. Los 3 corregidos antes de cerrar.
+
+---
+
+## [0.7.0] — 2026-04-22
+
+### Contexto
+Tres bloques de trabajo intercalados: cierre del último pendiente MVP (constancia de culminación para FINISHED), consolidación de `full_name` como campo obligatorio en `users`, y limpieza de credenciales hardcoded en el repo público.
+
+---
+
+### Constancia de culminación (V1.0.8)
+
+**Por qué:** el flujo cerraba en FINISHED sin emitir un documento oficial. La Resolución CF 002-2024 exige una constancia con datos del estudiante, empresa, fechas, horas, notas (asesor 50% + tutor 50%) y nota final.
+
+**Nuevo endpoint:**
+```
+GET /api/v1/agreements/{id}/certificate
+```
+
+- Solo para agreements en `FINISHED`; 409 en otros estados.
+- **Cache-on-first-write en R2**: key determinista `certificates/{universityId}/{agreementId}.pdf`. Primera llamada genera + sube; las siguientes sirven desde R2.
+- Nuevo campo `agreements.certificate_file_key VARCHAR(255) NULL` (migración V1.0.8).
+
+**Autorización (`assertCertificateAccess`):**
+- `ADMIN` — cross-tenant.
+- `COORDINATOR` — tenant-local.
+- `STUDENT` — solo dueño del convenio.
+- `ACADEMIC_ADVISOR` / `COMPANY_TUTOR` — solo si están asignados.
+- `SECRETARY` y resto — denegado.
+
+**Template:** `src/main/resources/templates/constancia_culminacion.html` (Thymeleaf; gitignored como el convenio).
+
+**Tests:** 11 nuevos en `@Nested DownloadCertificate` — happy path con `ArgumentCaptor`, cache hit, not-FINISHED, upload-failure sin persistir file_key, coordinator-same-tenant, 5 denegaciones por rol/tenant, ADMIN bypass.
+
+---
+
+### `users.full_name NOT NULL` (V1.0.6 + V1.0.7)
+
+**Por qué:** el PDF del convenio necesitaba mostrar los nombres reales del Docente Asesor y del Tutor Co-formador. Antes, `users.full_name` era opcional y se poblaba solo para estudiantes (desde `students.full_name`), dejando al asesor/tutor con email como "nombre".
+
+**V1.0.6 — schema hardening**:
+- 10 índices nuevos (incluye parcial en `agreements(documenso_document_id) WHERE IS NOT NULL` y composites para dashboards de coordinador).
+- Drop de `idx_user_email` redundante (ya había UK).
+- 3 CHECK constraints `NOT VALID`: `chk_non_admin_has_university`, `chk_rejected_has_reason`, `chk_final_grade_requires_sources`.
+
+**V1.0.7 — consolidación `full_name`**:
+- `VALIDATE CONSTRAINT` de los 3 CHECKs de V1.0.6.
+- `ALTER TABLE users ADD COLUMN full_name VARCHAR NOT NULL` con **backfill en 4 etapas**:
+  1. STUDENT ← `students.full_name`.
+  2. COMPANY_TUTOR ← `companies.representative_name` si el email coincide.
+  3. ADMIN / ACADEMIC_ADVISOR seed ← valores explícitos.
+  4. Fallback ← prefijo del email.
+
+**`RegisterRequest` y `CreateUserRequest`** — ahora exigen `@NotBlank fullName` para todos los roles.
+
+**`PdfGenerationServiceImpl`** — publica `advisorName` y `companyTutorName` como variables de contexto. Firmas del PDF del convenio pasan de Coordinación/RepLegal/Student a Advisor/Tutor/Student (los 3 que realmente firman en Documenso).
+
+---
+
+### Hardening de credenciales
+
+**Por qué:** el repo es **público** y `application.yml` + `pom.xml` tenían credenciales hardcoded desde el commit `5642420 MVP`: R2 access/secret keys (literales sin `${ENV}`), Documenso token default, JWT secret default, credenciales Flyway (`postgres:postgres`) en properties.
+
+**Cambios:**
+
+- **`application.yml`**: R2 keys, JWT secret y Documenso token migrados a `${ENV_VAR}` **sin default** → fail-fast si falta la env var. Se añade `spring.config.import: "optional:file:.env[.properties]"` para que Spring Boot cargue `.env` automáticamente en local (feature nativa, sin librería extra).
+- **`pom.xml`**: eliminadas las properties `flyway.url/user/password`. Spring aplica las migraciones al arrancar; el plugin Maven sigue funcionando si se pasan las credenciales con `-Dflyway.url=... -Dflyway.user=... -Dflyway.password=...`.
+- **`.env`** (gitignored): expandido a 6+ variables (prefijo `APP_STORAGE_` para relaxed-binding con `app.storage.*`); JWT secret aleatorio regenerado con `openssl rand -base64 48`; espacios tras `=` corregidos (rompían el parser `.properties`).
+- **`.env.example`**: nuevo, checkeado a git, con placeholders y comentarios.
+- **`.gitignore`**: añadidos `.env.local`, `.env.*.local`, `!.env.example`.
+- **`README.md`**: sección "Variables de entorno" reescrita con tabla de obligatorias vs. opcionales + paso `cp .env.example .env` en el flujo de arranque + nota de que las keys del histórico git **deben rotarse** antes de producción.
+
+**Riesgo aceptado:** las credenciales expuestas en commits pasados no se eliminaron del histórico en esta versión (requiere `git filter-repo` + force-push). El usuario reservó la rotación para cuando el compañero encargado esté disponible.
+
+---
+
+### Pendientes para el cierre MVP
+
+| # | Ítem | Estado |
+|---|------|--------|
+| 1 | Constancia de culminación | ✅ Cerrado en esta versión |
+| 2 | Rotación de credenciales del repo público | Pospuesto (riesgo aceptado) |
+
+---
+
 ## [0.6.0] — 2026-04-22
 
 ### Contexto

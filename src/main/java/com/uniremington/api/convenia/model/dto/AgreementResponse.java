@@ -7,6 +7,11 @@ import java.time.LocalDateTime;
 /**
  * Full response payload for a professional practice agreement resource.
  *
+ * <p>Uploaded documents (CV, NIT, RUT, CONTRACT, etc.) are no longer returned
+ * inline here; consult {@code GET /agreements/{id}/documents} for the list of
+ * uploaded files, or {@code GET /agreements/{id}/documents/{type}} to download
+ * a specific one.</p>
+ *
  * @param id                    Agreement unique identifier.
  * @param universityId          Tenant university identifier.
  * @param studentId             Student identifier.
@@ -31,15 +36,6 @@ import java.time.LocalDateTime;
  * @param advisorGrade          Academic advisor's grade (0.0–5.0); null until EVALUATION phase.
  * @param companyGrade          Company representative's grade (0.0–5.0); null until EVALUATION phase.
  * @param finalGrade            Calculated final grade (average of advisor and company grades).
- * @param cvFileKey             R2 key for the student CV; null if not yet uploaded.
- * @param contractFileKey       R2 key for the scanned labor contract; null if not yet uploaded.
- * @param nationalIdFileKey     R2 key for the student national ID copy; null if not yet uploaded.
- * @param epsFileKey            R2 key for the EPS health certificate; null if not yet uploaded.
- * @param arlFileKey            R2 key for the ARL occupational risk certificate; null if not yet uploaded.
- * @param workPlanFileKey       R2 key for the agreed work plan; null if not yet uploaded.
- * @param nitFileKey            R2 key for the company NIT certificate; null if not yet uploaded.
- * @param rutFileKey            R2 key for the company RUT document; null if not yet uploaded.
- * @param camaraComercioFileKey R2 key for the Cámara de Comercio certificate; null if not yet uploaded.
  * @param createdAt             Timestamp when the agreement was created.
  * @param updatedAt             Timestamp of the last update.
  */
@@ -68,15 +64,6 @@ public record AgreementResponse(
         BigDecimal advisorGrade,
         BigDecimal companyGrade,
         BigDecimal finalGrade,
-        String cvFileKey,
-        String contractFileKey,
-        String nationalIdFileKey,
-        String epsFileKey,
-        String arlFileKey,
-        String workPlanFileKey,
-        String nitFileKey,
-        String rutFileKey,
-        String camaraComercioFileKey,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {}

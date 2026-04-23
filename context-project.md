@@ -2,9 +2,9 @@
 
 ## 1. Estado del Proyecto
 
-**Versión backend:** 0.6.0 — Backend MVP completo.
+**Versión backend:** 0.8.0 — Backend MVP completo + normalización fase 1 (documentos extraídos de `agreements`).
 **Frontend:** Angular 21, en desarrollo (`convenia-web/`).
-**Prioridad actual:** Terminar el frontend para demo completa del flujo MVP.
+**Prioridad actual:** Terminar el frontend para demo completa del flujo MVP + hardening pre-producción (secretos y separación de seeds por perfil).
 
 ---
 
@@ -71,9 +71,11 @@ DRAFT → ADMIN_REVIEW → COORDINATION_REVIEW → PENDING_SIGNATURE → ACTIVE 
 | POST | `/api/v1/agreements/{id}/endorse` | COORDINATION_REVIEW → PENDING_SIGNATURE |
 | POST | `/api/v1/agreements/{id}/start-evaluation` | ACTIVE → EVALUATION (requiere 3 visitas) |
 | PUT | `/api/v1/agreements/{id}/grade` | Calificar (EVALUATION) |
-| POST | `/api/v1/agreements/{id}/documents/{type}` | Subir documento a R2 |
+| POST | `/api/v1/agreements/{id}/documents/{type}` | Subir documento a R2 (UPSERT, borra archivo viejo si había) |
+| GET | `/api/v1/agreements/{id}/documents` | Listar metadata de documentos subidos |
 | GET | `/api/v1/agreements/{id}/documents/{type}` | Descargar documento de R2 |
 | GET | `/api/v1/agreements/{id}/document` | Descargar PDF firmado de Documenso |
+| GET | `/api/v1/agreements/{id}/certificate` | Descargar constancia de culminación (FINISHED) |
 | GET | `/api/v1/agreements/{id}/visits` | Listar visitas |
 | POST | `/api/v1/agreements/{id}/visits` | Registrar visita (ACTIVE) |
 | POST | `/api/v1/webhooks/signature` | Webhook Documenso → activa convenio |
@@ -92,6 +94,8 @@ DRAFT → ADMIN_REVIEW → COORDINATION_REVIEW → PENDING_SIGNATURE → ACTIVE 
 | V1.0.5 | Revisión máquina de estados |
 | V1.0.6 | Schema hardening: 10 índices nuevos (partial en `agreements(documenso_document_id)`, composites para dashboards), drop `idx_user_email`, 3 CHECK constraints NOT VALID |
 | V1.0.7 | `VALIDATE CONSTRAINT` de V1.0.6 + `users.full_name NOT NULL` con backfill en 4 etapas |
+| V1.0.8 | `agreements.certificate_file_key VARCHAR(255) NULL` — cache de R2 de la constancia |
+| V1.1.0 | Normalización fase 1: nueva tabla `agreement_documents` con UK `(agreement_id, document_type)`; backfill desde los 9 `*_file_key` de `agreements`; DROP de las 9 columnas. |
 
 **Diferido post-MVP:** `TIMESTAMPTZ` en las 8 tablas (requiere cambiar `AuditableEntity.LocalDateTime` → `Instant` y añadir `spring.jpa.properties.hibernate.jdbc.time_zone=UTC`).
 
@@ -108,15 +112,57 @@ Se muestra en el PDF del convenio como **Docente Asesor** (cláusula 8ª y firma
 
 ---
 
-## 8. Pendiente backend
+## 8. Constancia de culminación (V1.0.8)
 
-| Ítem | Prioridad |
-|------|-----------|
-| Constancia de culminación `GET /agreements/{id}/certificate` (FINISHED) | Aplazado |
+Endpoint `GET /api/v1/agreements/{id}/certificate` — emite el PDF oficial cuando el convenio está en `FINISHED`.
+
+- **Storage**: cache-on-first-write en R2 con key `certificates/{universityId}/{agreementId}.pdf`. La segunda llamada sirve desde R2.
+- **Template**: `constancia_culminacion.html` (Thymeleaf, gitignored).
+- **Contenido**: estudiante (nombre + cédula + programa), empresa (razón social + NIT), fechas, horas semanales + horas totales calculadas, asesor, tutor, notas (50 %/50 %) y nota final.
+- **Autorización** (`assertCertificateAccess`):
+  - `ADMIN` — cross-tenant.
+  - `COORDINATOR` — dentro del mismo `university_id`.
+  - `STUDENT` — solo si es el dueño del convenio.
+  - `ACADEMIC_ADVISOR` — solo si está asignado al convenio.
+  - `COMPANY_TUTOR` — solo si está asignado al convenio.
+  - `SECRETARY` y cualquier otro rol → `AccessDeniedException`.
 
 ---
 
-## 9. Seed data de pruebas
+## 9. `agreement_documents` (V1.1.0)
+
+Documentos subidos por usuarios (CV, CONTRACT, NATIONAL_ID, EPS, ARL, WORK_PLAN, NIT, RUT, CAMARA_COMERCIO) viven en una tabla normalizada `agreement_documents` con UK `(agreement_id, document_type)` — 1 fila viva por tipo, re-upload hace UPSERT via `ON CONFLICT ON CONSTRAINT uk_agreement_documents DO UPDATE` (atómico, sin TOCTOU). Al re-subir, el archivo anterior en R2 se borra en el mismo flujo; si el borrado falla se loggea como warning (orphan tolerado frente a fallar la request).
+
+Autorización por rol/asignación (`assertDocumentAccess` en el service):
+
+- `ADMIN` — cross-tenant.
+- `COORDINATOR` y `SECRETARY` — dentro del mismo `university_id`.
+- `STUDENT` — solo dueño del convenio.
+- `ACADEMIC_ADVISOR` / `COMPANY_TUTOR` — solo si están asignados al convenio.
+- Cualquier otro → `AccessDeniedException`.
+
+Los artefactos generados por el sistema (`documenso_document_id`, `pdf_cloud_url`, `certificate_file_key`) siguen en `agreements` — semántica distinta (sin uploader, 1:1 con el convenio).
+
+`AgreementResponse` ya no incluye los 9 file keys. El frontend consulta `GET /agreements/{id}/documents` para listar metadata (sin fileKey — no se expone el key R2 para evitar enumeración).
+
+## 10. Pendiente backend
+
+| Ítem | Prioridad |
+|------|-----------|
+| *(nada pendiente para MVP)* | — |
+
+### Deuda técnica documentada (post-MVP)
+
+- **Concurrencia del cache**: dos requests simultáneos de primera vez pueden renderizar + subir el PDF 2 veces. Key determinista → idempotente. TODO en el Javadoc de `downloadCertificate`. Fix: `@Lock(LockModeType.PESSIMISTIC_WRITE)` en el finder.
+- **Null `universityId` en tokens no-ADMIN**: `assertTenantAccess` short-circuita, dando acceso cross-tenant. Afecta a TODOS los endpoints del backend. Fix: validación defensiva en `JwtAuthenticationFilter`.
+- **Secretos en `application.yml`**: rotar y mover a env-only sin defaults (`APP_JWT_SECRET`, `DOCUMENSO_TOKEN`, `app.storage.access-key/secret-key`).
+- **Seeds de prueba en Flyway**: V1.0.1, V1.0.2, V1.0.4, parte de V1.0.7 contienen usuarios/password de test. Separar por perfil (`spring.flyway.locations`) antes de ir a producción.
+- **Emails de asesor/tutor en la constancia**: PII presente en el PDF que recibe el estudiante. Decisión de negocio pendiente (¿ocultar por minimización de PII?).
+- **Magic numbers dispersos**: 3 visitas, 4/12 meses, 20/48 h/sem, 80/70 % créditos. Extraer a `PracticeConstants` citando la Resolución.
+
+---
+
+## 11. Seed data de pruebas
 
 - Universidad Remington id=1
 - `admin@convenia.app` / `Admin1234!` (ADMIN)
