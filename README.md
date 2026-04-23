@@ -243,7 +243,7 @@ Fixtures centralizados en `src/test/java/com/uniremington/api/convenia/util/Test
 
 - **[Resolución CF No. 002 de 2024](./normativa_practicas.md)** — reglamento de Prácticas Profesionales, Facultad de Ingeniería.
 - **[`business_rules.md`](./business_rules.md)** — reglas de negocio derivadas de la Resolución.
-- **[`AI-agent-context-project.md`](./AI-agent-context-project.md)** — contexto maestro para agentes de IA (stack, flujo, endpoints).
+- **[`AI-agent-context-project.md`](./context-project.md)** — contexto maestro para agentes de IA (stack, flujo, endpoints).
 - **[`CHANGELOG.md`](./CHANGELOG.md)** — historial de versiones detallado.
 - **[`MER.mermaid`](./MER.mermaid)** — diagrama entidad-relación (Mermaid).
 - **[`.rules/rules/springboot.mdc`](./.rules/rules/springboot.mdc)** — convenciones obligatorias de estilo Spring Boot.

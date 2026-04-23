@@ -4,7 +4,6 @@ bibliokeep-backend-main
 MER.mermaid
 documenso
 business_rules.md
-AI-agent-context-project.md
 target/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
@@ -93,3 +92,4 @@ build/
 /.agents/skills/angular-developer/references/di-fundamentals.md
 /.agents/skills/angular-developer/references/angular-animations.md
 /.agents/skills/angular-developer/references/cli.md
+/CLAUDE.md
