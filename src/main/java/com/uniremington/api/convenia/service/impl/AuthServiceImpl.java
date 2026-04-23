@@ -111,6 +111,7 @@ public class AuthServiceImpl implements AuthService {
         var user = userRepository.save(User.builder()
                 .email(request.email())
                 .password(passwordEncoder.encode(request.password()))
+                .fullName(request.fullName())
                 .role(role)
                 .university(university)
                 .active(true)
@@ -137,8 +138,7 @@ public class AuthServiceImpl implements AuthService {
     }
 
     private void validateStudentFields(RegisterRequest request) {
-        if (request.fullName() == null || request.fullName().isBlank())
-            throw new IllegalArgumentException("fullName is required for STUDENT registration");
+        // fullName is validated at the DTO level (@NotBlank) for every role.
         if (request.documentNumber() == null || request.documentNumber().isBlank())
             throw new IllegalArgumentException("documentNumber is required for STUDENT registration");
         if (request.phoneNumber() == null || request.phoneNumber().isBlank())

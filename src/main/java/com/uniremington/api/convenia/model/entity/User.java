@@ -61,6 +61,16 @@ public class User extends AuditableEntity {
     private String password;
 
     /**
+     * Full legal name of the user. Required for every role.
+     * Used in the generated agreement PDF to identify advisors, coordinators
+     * and company tutors who otherwise would only be represented by email.
+     * For students, this is duplicated in {@code students.full_name} to keep
+     * that table self-contained.
+     */
+    @Column(name = "full_name", nullable = false)
+    private String fullName;
+
+    /**
      * Authorization role determining what actions this user can perform.
      * Stored as a string (not ordinal) to avoid reordering issues.
      *

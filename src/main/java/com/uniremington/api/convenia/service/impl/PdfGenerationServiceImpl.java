@@ -83,13 +83,15 @@ public class PdfGenerationServiceImpl implements PdfGenerationService {
         ctx.setVariable("monthlyStipend",         agreement.getMonthlyStipend());
         ctx.setVariable("currentDate",            formatDate(LocalDate.now()));
 
-        // Advisor — User entity only stores email; full name requires a profile entity
+        // Advisor — full name and email from User entity
         if (agreement.getAcademicAdvisor() != null) {
+            ctx.setVariable("advisorName",  agreement.getAcademicAdvisor().getFullName());
             ctx.setVariable("advisorEmail", agreement.getAcademicAdvisor().getEmail());
         }
 
-        // Company tutor — same limitation, email only
+        // Company tutor — full name and email from User entity
         if (agreement.getCompanyRep() != null) {
+            ctx.setVariable("companyTutorName",  agreement.getCompanyRep().getFullName());
             ctx.setVariable("companyTutorEmail", agreement.getCompanyRep().getEmail());
         }
 

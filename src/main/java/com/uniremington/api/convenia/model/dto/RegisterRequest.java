@@ -6,12 +6,14 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 public record RegisterRequest(
-        @NotBlank @Email   String email,
+        @NotBlank @Email         String email,
         @NotBlank @Size(min = 8) String password,
-        @NotNull           Long   universityId,
+        @NotNull                 Long   universityId,
+
+        // Required for ALL roles
+        @NotBlank                String fullName,
 
         // Required only for STUDENT role
-        String  fullName,
         String  documentNumber,
         String  phoneNumber,
         Long    academicProgramId,

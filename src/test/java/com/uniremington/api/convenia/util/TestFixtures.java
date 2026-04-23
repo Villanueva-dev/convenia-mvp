@@ -29,6 +29,7 @@ public class TestFixtures {
                 .id(id)
                 .email(role.name().toLowerCase() + id + "@test.edu.co")
                 .password("encoded_password")
+                .fullName("Test " + role.name() + " " + id)
                 .role(role)
                 .university(university)
                 .build();

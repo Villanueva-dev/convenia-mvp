@@ -39,7 +39,7 @@ class UserServiceImplTest {
     void coordinatorUsesOwnUniversityId() {
         var university  = TestFixtures.university(1L);
         var coordinator = TestFixtures.jwtUser(5L, "COORDINATOR", 1L);
-        var request     = new CreateUserRequest("advisor@test.edu.co", "password1", 99L, AllowedRole.ACADEMIC_ADVISOR);
+        var request     = new CreateUserRequest("Test Advisor", "advisor@test.edu.co", "password1", 99L, AllowedRole.ACADEMIC_ADVISOR);
         var savedUser   = TestFixtures.user(50L, UserRole.ACADEMIC_ADVISOR, university);
 
         when(userRepository.existsByEmail("advisor@test.edu.co")).thenReturn(false);
@@ -57,7 +57,7 @@ class UserServiceImplTest {
     void adminUsesRequestUniversityId() {
         var university = TestFixtures.university(7L);
         var admin      = TestFixtures.jwtUser(1L, "ADMIN", null);
-        var request    = new CreateUserRequest("tutor@other.edu.co", "password1", 7L, AllowedRole.COMPANY_TUTOR);
+        var request    = new CreateUserRequest("Test Tutor", "tutor@other.edu.co", "password1", 7L, AllowedRole.COMPANY_TUTOR);
         var savedUser  = TestFixtures.user(60L, UserRole.COMPANY_TUTOR, university);
 
         when(userRepository.existsByEmail("tutor@other.edu.co")).thenReturn(false);
@@ -73,7 +73,7 @@ class UserServiceImplTest {
     @Test
     void throwsWhenEmailAlreadyExists() {
         var coordinator = TestFixtures.jwtUser(5L, "COORDINATOR", 1L);
-        var request     = new CreateUserRequest("existing@test.edu.co", "password1", 1L, AllowedRole.ACADEMIC_ADVISOR);
+        var request     = new CreateUserRequest("Test Advisor", "existing@test.edu.co", "password1", 1L, AllowedRole.ACADEMIC_ADVISOR);
 
         when(userRepository.existsByEmail("existing@test.edu.co")).thenReturn(true);
 
@@ -87,7 +87,7 @@ class UserServiceImplTest {
     @Test
     void throwsWhenUniversityNotFound() {
         var coordinator = TestFixtures.jwtUser(5L, "COORDINATOR", 99L);
-        var request     = new CreateUserRequest("new@test.edu.co", "password1", 99L, AllowedRole.SECRETARY);
+        var request     = new CreateUserRequest("Test Secretary", "new@test.edu.co", "password1", 99L, AllowedRole.SECRETARY);
 
         when(userRepository.existsByEmail("new@test.edu.co")).thenReturn(false);
         when(universityRepository.findById(99L)).thenReturn(Optional.empty());
@@ -101,7 +101,7 @@ class UserServiceImplTest {
     void allAllowedRolesMapToUserRole(AllowedRole allowedRole) {
         var university  = TestFixtures.university(1L);
         var coordinator = TestFixtures.jwtUser(5L, "COORDINATOR", 1L);
-        var request     = new CreateUserRequest("user@test.edu.co", "password1", 1L, allowedRole);
+        var request     = new CreateUserRequest("Test User", "user@test.edu.co", "password1", 1L, allowedRole);
 
         var expectedRole = switch (allowedRole) {
             case ACADEMIC_ADVISOR -> UserRole.ACADEMIC_ADVISOR;
@@ -124,7 +124,7 @@ class UserServiceImplTest {
     void encodesPasswordBeforeSaving() {
         var university  = TestFixtures.university(1L);
         var coordinator = TestFixtures.jwtUser(5L, "COORDINATOR", 1L);
-        var request     = new CreateUserRequest("new@test.edu.co", "plaintext", 1L, AllowedRole.ACADEMIC_ADVISOR);
+        var request     = new CreateUserRequest("Test User", "new@test.edu.co", "plaintext", 1L, AllowedRole.ACADEMIC_ADVISOR);
         var savedUser   = TestFixtures.user(50L, UserRole.ACADEMIC_ADVISOR, university);
 
         when(userRepository.existsByEmail(anyString())).thenReturn(false);

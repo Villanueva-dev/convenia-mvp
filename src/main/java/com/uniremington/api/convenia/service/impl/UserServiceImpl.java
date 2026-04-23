@@ -41,6 +41,7 @@ public class UserServiceImpl implements UserService {
         var user = User.builder()
                 .email(request.email())
                 .password(passwordEncoder.encode(request.password()))
+                .fullName(request.fullName())
                 .role(toUserRole(request.role()))
                 .university(university)
                 .build();
