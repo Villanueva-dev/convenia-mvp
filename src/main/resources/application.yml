@@ -3,22 +3,33 @@ spring:
     name: Convenia API
 
   # ─────────────────────────────────────────────────────────────────────────────
+  # External config import
+  # Loads `.env` from the project root automatically in local dev.
+  # `optional:` means: do not fail if the file is missing (CI/prod supply
+  # the env vars directly through the environment).
+  # ─────────────────────────────────────────────────────────────────────────────
+  config:
+    import: "optional:file:.env[.properties]"
+
+  # ─────────────────────────────────────────────────────────────────────────────
   # DataSource — PostgreSQL
   # Variables: DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
   # If no env var is set, the default value after the colon (:) is used.
   # ─────────────────────────────────────────────────────────────────────────────
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/${DB_NAME:convenia-stagge-db}
-    username: ${DB_USER:postgres}
-    password: ${DB_PASSWORD:postgres}
+    url: jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
       pool-name: ConveniaHikariPool
       maximum-pool-size: 10
       minimum-idle: 5
       idle-timeout: 30000
-      connection-timeout: 20000
-      leak-detection-threshold: 60000
+      connection-timeout: 30000
+      leak-detection-threshold: 2000
+      auto-commit: false
+      max-lifetime: 18000000
 
   # ─────────────────────────────────────────────────────────────────────────────
   # JPA / Hibernate
@@ -44,6 +55,8 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: false
+    execute-in-transaction: false
+    validate-on-migrate: true
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Thymeleaf — disabled for API-only mode
@@ -62,25 +75,26 @@ server:
 # ─────────────────────────────────────────────────────────────────────────────
 app:
   jwt:
-    # Secret key for signing JWT tokens.
-    # MUST be at least 256 bits (32 chars) for HMAC-SHA-256.
-    # Override in production via APP_JWT_SECRET env variable.
-    secret: ${APP_JWT_SECRET:convenia-secret-key-for-jwt-token-must-be-256-bits!!}
+    # Secret key for signing JWT tokens. MUST be at least 256 bits
+    # (32 chars) for HMAC-SHA-256. No default: the app fails to start
+    # if APP_JWT_SECRET is not set (fail-fast on missing secret).
+    secret: ${APP_JWT_SECRET}
     # Token expiration in milliseconds. Default: 24 hours (86400000 ms).
     expiration: ${APP_JWT_EXPIRATION:86400000}
   cors:
     # Comma-separated list of allowed frontend origins.
     allowed-origins: ${APP_ALLOWED_ORIGINS:http://localhost:8080,http://localhost:3000,http://localhost:4200}
   storage:
-    endpoint-url: https://6ca64745261239d70ab98f4ac30a23f2.r2.cloudflarestorage.com
-    bucket:       convenia-docs
-    access-key:   0bf0bfee16a8ecbf7ce5de8b509d9b7b
-    secret-key:   d14294cb5baca98010a5d3225245fb2f314b3a6a0ef69f126e4da0cf1c005cac
+    # Cloudflare R2 (S3-compatible). All secrets must come from the environment.
+    endpoint-url: ${APP_STORAGE_ENDPOINT_URL}
+    bucket:       ${APP_STORAGE_BUCKET:convenia-docs}
+    access-key:   ${APP_STORAGE_ACCESS_KEY}
+    secret-key:   ${APP_STORAGE_SECRET_KEY}
   documenso:
     # Documenso REST API base URL (cloud: https://app.documenso.com/api/v2).
     base-url: ${DOCUMENSO_BASE_URL:https://app.documenso.com/api/v2}
-    # API token. Override in production via DOCUMENSO_TOKEN env variable.
-    token: ${DOCUMENSO_TOKEN:api_xp93o1213l658pke}
+    # API token. No default — must be provided via DOCUMENSO_TOKEN env variable.
+    token: ${DOCUMENSO_TOKEN}
     # Webhook signing secret — copy from Documenso dashboard → Webhooks → Secret.
     # Leave blank locally to skip verification. REQUIRED in production.
     webhook-secret: ${DOCUMENSO_WEBHOOK_SECRET:}

@@ -19,9 +19,12 @@
 		<mapstruct.version>1.6.3</mapstruct.version>
 		<jjwt.version>0.13.0</jjwt.version>
 		<openhtml.version>1.0.10</openhtml.version>
-		<flyway.url>jdbc:postgresql://localhost:5433/convenia-stagge-db</flyway.url>
-		<flyway.user>postgres</flyway.user>
-		<flyway.password>postgres</flyway.password>
+		<!--
+			Flyway credentials are NOT stored here. For manual invocations of
+			the Maven plugin (e.g. `mvn flyway:info`) pass them on the CLI:
+			-Dflyway.url=... -Dflyway.user=... -Dflyway.password=...
+			Migrations apply automatically when Spring Boot starts.
+		-->
 		<flyway.cleanDisabled>false</flyway.cleanDisabled>
 	</properties>
 
