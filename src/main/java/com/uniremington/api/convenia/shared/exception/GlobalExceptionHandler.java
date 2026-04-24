@@ -10,6 +10,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.io.IOException;
 import java.net.URI;
@@ -265,6 +266,36 @@ public class GlobalExceptionHandler {
         problem.setTitle("File read error");
 
         return ResponseEntity.badRequest().body(problem);
+    }
+
+    // ── 413 Payload Too Large — Multipart size exceeded ──────────────────────
+
+    /**
+     * Handles {@link MaxUploadSizeExceededException} thrown by Spring when a
+     * multipart request exceeds {@code spring.servlet.multipart.max-file-size}.
+     *
+     * <p>Returns 413 (Payload Too Large) with a human-readable message that
+     * includes the configured limit in megabytes, so the client can surface
+     * an actionable error.</p>
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ProblemDetail> handleMaxUploadSize(MaxUploadSizeExceededException ex) {
+
+        long limitBytes = ex.getMaxUploadSize();
+        String limitLabel = limitBytes > 0
+                ? (limitBytes / (1024 * 1024)) + " MB"
+                : "el límite configurado";
+
+        log.warn("Upload rejected: exceeds max size ({})", limitLabel);
+
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.PAYLOAD_TOO_LARGE,
+                "El archivo supera el tamaño máximo permitido (" + limitLabel
+                        + "). Comprime el PDF o reduce su resolución e intenta de nuevo.");
+        problem.setType(URI.create(BASE_URI + "/payload-too-large"));
+        problem.setTitle("Archivo demasiado grande");
+
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(problem);
     }
 
     // ── 502 Bad Gateway — External service failures ───────────────────────────

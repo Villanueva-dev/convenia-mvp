@@ -64,6 +64,17 @@ spring:
   thymeleaf:
     check-template-location: false
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Multipart uploads — per-file limit for document uploads (CV, NIT, ARL, ...).
+  # Keep aligned with the client-side validation in AgreementDetail (5 MB).
+  # Exceeding the limit triggers MaxUploadSizeExceededException → handled in
+  # GlobalExceptionHandler as HTTP 413 Payload Too Large.
+  # ─────────────────────────────────────────────────────────────────────────────
+  servlet:
+    multipart:
+      max-file-size:    5MB
+      max-request-size: 5MB
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Server
 # ─────────────────────────────────────────────────────────────────────────────
