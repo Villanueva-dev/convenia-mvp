@@ -6,6 +6,7 @@ import com.uniremington.api.convenia.model.entity.Agreement;
 import com.uniremington.api.convenia.service.DocumensoService;
 import com.uniremington.api.convenia.shared.exception.ExternalServiceException;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.pdfbox.pdmodel.PDDocument;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
@@ -14,6 +15,7 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,13 +47,23 @@ public class DocumensoServiceImpl implements DocumensoService {
     private static final String       SIGNER_ROLE   = "SIGNER";
     private static final String       DOCUMENT_TYPE = "DOCUMENT";
 
-    // Signature field geometry for direct mode (% of page width/height, 0-100)
-    private static final double SIG_WIDTH     = 25.0;
-    private static final double SIG_HEIGHT    = 8.0;
-    private static final double SIG_Y         = 84.0;
-    private static final double SIG_X_ADVISOR = 5.0;
-    private static final double SIG_X_COMPANY = 37.0;
-    private static final double SIG_X_STUDENT = 69.0;
+    // Signature field geometry for direct mode.
+    // Documenso v2 API: porcentajes 0-100, origin top-left (confirmado en
+    // packages/lib/types/field.ts ZClampedField* + packages/lib/universal/
+    // field-renderer/field-renderer.ts).
+    //
+    // Calibrado midiendo convenio_practica.html renderizado a PDF con pdfplumber:
+    //   Labels (Docente Asesor / Tutor / Estudiante) están en Y=39.43% top en A4.
+    //   Sign-line (<div class="sign-line">) está ~3% arriba (≈36.5%).
+    //   SIG_Y=30 pone el campo en 30%-36%, con "Firma" centrada en ~33%
+    //   → justo arriba del underscore como pidió el usuario.
+    //   SIG_X_* = centro de cada columna - SIG_WIDTH/2, para centrado horizontal.
+    private static final double SIG_WIDTH     = 22.0;
+    private static final double SIG_HEIGHT    = 6.0;
+    private static final double SIG_Y         = 30.0;
+    private static final double SIG_X_ADVISOR = 14.3;  // centro 25.32% (Docente Asesor)
+    private static final double SIG_X_COMPANY = 39.0;  // centro 50.00% (Tutor)
+    private static final double SIG_X_STUDENT = 63.7;  // centro 74.68% (Estudiante)
 
     private final RestClient documensoRestClient;
     private final String     templateId;
@@ -183,13 +195,25 @@ public class DocumensoServiceImpl implements DocumensoService {
         if (pdfBytes == null) {
             throw new IllegalArgumentException("pdfBytes required in direct (non-template) mode");
         }
-        String envelopeId = createEnvelope(agreement, pdfBytes);
+        int pageCount = countPdfPages(pdfBytes);
+        log.debug("PDF for agreement id={} has {} pages", agreement.getId(), pageCount);
+        String envelopeId = createEnvelope(agreement, pdfBytes, pageCount);
         distribute(envelopeId);
         return envelopeId;
     }
 
-    private String createEnvelope(Agreement agreement, byte[] pdfBytes) {
-        String payloadJson = serializePayload(buildEnvelopePayload(agreement));
+    /** Returns the number of pages in the PDF, or 1 on parse failure. */
+    private int countPdfPages(byte[] pdfBytes) {
+        try (PDDocument doc = PDDocument.load(pdfBytes)) {
+            return Math.max(1, doc.getNumberOfPages());
+        } catch (IOException e) {
+            log.warn("Failed to parse PDF to count pages; defaulting to page 1. {}", e.getMessage());
+            return 1;
+        }
+    }
+
+    private String createEnvelope(Agreement agreement, byte[] pdfBytes, int signaturePage) {
+        String payloadJson = serializePayload(buildEnvelopePayload(agreement, signaturePage));
 
         var body = new LinkedMultiValueMap<String, Object>();
         body.add("payload", payloadJson);
@@ -218,13 +242,13 @@ public class DocumensoServiceImpl implements DocumensoService {
         }
     }
 
-    private Map<String, Object> buildEnvelopePayload(Agreement agreement) {
+    private Map<String, Object> buildEnvelopePayload(Agreement agreement, int signaturePage) {
         var payload = new LinkedHashMap<String, Object>();
         payload.put("title",      "Convenio de Práctica — " + agreement.getStudent().getFullName());
         payload.put("type",       DOCUMENT_TYPE);
         payload.put("externalId", "agreement-" + agreement.getId());
         payload.put("meta",       buildMeta(agreement));
-        payload.put("recipients", buildRecipients(agreement));
+        payload.put("recipients", buildRecipients(agreement, signaturePage));
         return payload;
     }
 
@@ -236,42 +260,45 @@ public class DocumensoServiceImpl implements DocumensoService {
         return meta;
     }
 
-    private List<Map<String, Object>> buildRecipients(Agreement agreement) {
+    private List<Map<String, Object>> buildRecipients(Agreement agreement, int signaturePage) {
         var recipients = new ArrayList<Map<String, Object>>();
 
         if (agreement.getAcademicAdvisor() != null) {
             recipients.add(recipientEntry(
                     agreement.getAcademicAdvisor().getEmail(),
                     agreement.getAcademicAdvisor().getEmail(),
-                    SIG_X_ADVISOR));
+                    SIG_X_ADVISOR,
+                    signaturePage));
         }
         if (agreement.getCompanyRep() != null) {
             recipients.add(recipientEntry(
                     agreement.getCompanyRep().getEmail(),
                     agreement.getCompanyRep().getEmail(),
-                    SIG_X_COMPANY));
+                    SIG_X_COMPANY,
+                    signaturePage));
         }
         recipients.add(recipientEntry(
                 agreement.getStudent().getFullName(),
                 agreement.getStudent().getUser().getEmail(),
-                SIG_X_STUDENT));
+                SIG_X_STUDENT,
+                signaturePage));
 
         return recipients;
     }
 
-    private Map<String, Object> recipientEntry(String name, String email, double sigX) {
+    private Map<String, Object> recipientEntry(String name, String email, double sigX, int page) {
         var recipient = new LinkedHashMap<String, Object>();
         recipient.put("name",   name);
         recipient.put("email",  email);
         recipient.put("role",   SIGNER_ROLE);
-        recipient.put("fields", List.of(signatureField(sigX)));
+        recipient.put("fields", List.of(signatureField(sigX, page)));
         return recipient;
     }
 
-    private Map<String, Object> signatureField(double positionX) {
+    private Map<String, Object> signatureField(double positionX, int page) {
         var field = new LinkedHashMap<String, Object>();
         field.put("type",      "SIGNATURE");
-        field.put("page",      1);
+        field.put("page",      page);
         field.put("positionX", positionX);
         field.put("positionY", SIG_Y);
         field.put("width",     SIG_WIDTH);

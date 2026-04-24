@@ -4,7 +4,7 @@ Gestor SaaS para automatizar el ciclo de vida de los **Convenios de Práctica Pr
 
 > Convenia cubre el flujo de la práctica de extremo a extremo: creación del borrador, validación por secretaría y coordinación, generación del PDF formal, firma electrónica vía **Documenso**, registro de visitas de seguimiento, evaluación 50 %/50 % entre Docente Asesor y Tutor Co-formador, y cierre con nota final.
 
-**Versión actual:** `0.8.0` — Backend MVP completo + normalización fase 1 (documentos extraídos a `agreement_documents`). Frontend Angular en desarrollo (repositorio `convenia-web/`).
+**Versión actual:** `0.10.0` — Backend MVP completo end-to-end, preparado para despliegue de demo. Aprobación de constancia por coordinación, IDOR fix, directorio de universidades, multipart 5 MB, **Java 21 LTS**. Frontend Angular en `convenia-web/` con flujo MVP completo.
 
 ---
 
@@ -57,7 +57,7 @@ DRAFT → ADMIN_REVIEW → COORDINATION_REVIEW → PENDING_SIGNATURE → ACTIVE 
 
 | Capa | Tecnología |
 |------|------------|
-| Backend | **Spring Boot 4.0.5** sobre **Java 25** |
+| Backend | **Spring Boot 4.0.5** sobre **Java 21 LTS** |
 | Persistencia | **PostgreSQL** + **Flyway** (migraciones versionadas) + **Hibernate** (`ddl-auto: validate`) |
 | Autenticación | **JWT** (HMAC-SHA-256, 24 h) vía `jjwt 0.13` |
 | Mapeo DTO ↔ Entity | **MapStruct 1.6** |
@@ -98,7 +98,7 @@ com.uniremington.api.convenia
 
 ## Prerrequisitos
 
-- **JDK 25** (Temurin o similar)
+- **JDK 21 LTS** (Temurin recomendado)
 - **Maven Wrapper** (`./mvnw`) — incluido en el repo
 - **PostgreSQL ≥ 15** — por defecto se espera en `localhost:5433`, base `convenia-stagge-db`
 - **Cuenta de Cloudflare R2** con un bucket `convenia-docs`
@@ -260,11 +260,53 @@ Todas las excepciones devuelven un `application/problem+json`:
 ## Tests
 
 ```bash
-./mvnw test           # corre JUnit 5 + Mockito (39 tests)
+./mvnw test           # corre JUnit 5 + Mockito (80 tests)
 ./mvnw verify         # corre tests + reporte JaCoCo en target/site/jacoco/
 ```
 
 Fixtures centralizados en `src/test/java/com/uniremington/api/convenia/util/TestFixtures.java`.
+
+---
+
+## Despliegue de la demo
+
+El backend está **deploy-ready** sobre Java 21 LTS. Consulta `context-project.md §10` para el detalle completo; resumen:
+
+### Build para producción
+
+```bash
+./mvnw -DskipTests package
+java -jar target/convenia-0.0.1-SNAPSHOT.jar
+```
+
+### PaaS sugeridas
+
+- **Railway / Render / Fly.io**: usa el `Dockerfile` (si se añade) o su autodetección de Spring Boot. Configura las env vars abajo.
+- **Heroku-like**: misma idea, env vars obligatorias.
+
+### Variables de entorno en producción
+
+Obligatorias (sin default):
+
+```
+APP_JWT_SECRET                 # openssl rand -base64 48
+APP_STORAGE_ENDPOINT_URL       # https://<account>.r2.cloudflarestorage.com
+APP_STORAGE_ACCESS_KEY         # Cloudflare R2 (rotadas antes de prod)
+APP_STORAGE_SECRET_KEY         # idem
+DOCUMENSO_TOKEN                # api_xxx
+DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD
+APP_ALLOWED_ORIGINS            # dominio real del frontend, no localhost
+```
+
+Opcionales (con default razonable): `APP_STORAGE_BUCKET`, `DOCUMENSO_BASE_URL`, `DOCUMENSO_WEBHOOK_SECRET`, `APP_JWT_EXPIRATION`, `SERVER_PORT`.
+
+### Antes de exponer a usuarios reales
+
+- **Rotar credenciales** expuestas en histórico público (R2, Documenso, JWT).
+- **Separar seed de test data** en Flyway por perfil (`spring.flyway.locations`).
+- Bajar `logging.level.org.hibernate.SQL` a `INFO` (hoy `DEBUG`).
+- Deshabilitar Swagger en prod: `springdoc.swagger-ui.enabled=false`.
+- Deshabilitar `spring.jpa.show-sql`.
 
 ---
 

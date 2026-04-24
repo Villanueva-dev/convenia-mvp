@@ -568,6 +568,14 @@ public class AgreementServiceImpl implements AgreementService {
         return pdf;
     }
 
+    @Override
+    public byte[] generateAgreementPdfPreview(Long id, JwtUser currentUser) {
+        var agreement = loadAgreement(id);
+        assertTenantAccess(agreement, currentUser);
+        log.info("Generating preview PDF for agreement id={} (no Documenso upload)", id);
+        return pdfGenerationService.generateAgreementPdf(agreement);
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private Agreement loadAgreement(Long id) {

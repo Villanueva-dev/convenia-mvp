@@ -362,6 +362,33 @@ public class AgreementController {
         return ResponseEntity.ok().headers(headers).body(pdf);
     }
 
+    @Operation(summary = "Preview the generated agreement PDF (calibration helper)",
+            description = "Renders the convenio PDF exactly as endorseAgreement would, but "
+                    + "without creating a Documenso envelope. Intended to inspect the layout "
+                    + "and measure signature line coordinates offline. Restricted to "
+                    + "COORDINATOR / ADMIN.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "PDF returned"),
+            @ApiResponse(responseCode = "403", description = "Role not allowed"),
+            @ApiResponse(responseCode = "404", description = "Agreement not found")
+    })
+    @GetMapping("/{id}/pdf-preview")
+    @PreAuthorize("hasAnyRole('COORDINATOR', 'ADMIN')")
+    public ResponseEntity<byte[]> previewAgreementPdf(
+            @PathVariable Long id,
+            @AuthenticationPrincipal JwtUser currentUser) {
+
+        byte[] pdf = agreementService.generateAgreementPdfPreview(id, currentUser);
+
+        var headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentDisposition(ContentDisposition.inline()
+                .filename("convenio_preview_" + id + ".pdf")
+                .build());
+
+        return ResponseEntity.ok().headers(headers).body(pdf);
+    }
+
     // ── Certificate of completion ────────────────────────────────────────────
 
     @Operation(summary = "Approve certificate of completion",

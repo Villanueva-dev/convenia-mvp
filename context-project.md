@@ -2,7 +2,7 @@
 
 ## 1. Estado del Proyecto
 
-**Versión backend:** 0.9.0 — MVP completo end-to-end: normalización de documentos, IDOR fix en agreements, aprobación de constancia por coordinación, alta de COORDINATOR vía ADMIN.
+**Versión backend:** 0.10.0 — MVP completo + preparación para demo (deploy-ready): multipart 5 MB con handler 413, endpoint `GET /universities` para selectores, Java downgradeado a 21 para runtime estable.
 **Frontend:** Angular 21, en desarrollo (`convenia-web/`).
 **Prioridad actual:** Terminar el frontend para demo completa del flujo MVP + hardening pre-producción (secretos y separación de seeds por perfil).
 
@@ -28,7 +28,7 @@
 
 ## 3. Arquitectura Técnica
 
-- **Backend:** Spring Boot 4 / Java 25 / PostgreSQL / JWT / Flyway / MapStruct
+- **Backend:** Spring Boot 4 / **Java 21** / PostgreSQL / JWT / Flyway / MapStruct
 - **Frontend:** Angular 21 (standalone, OnPush, signals, reactive forms, Angular Material)
 - **Almacenamiento:** Cloudflare R2 (S3-compatible) — upload + download implementados
 - **Firmas:** Documenso v2 REST API (template mode + direct PDF-upload mode)
@@ -77,6 +77,7 @@ DRAFT → ADMIN_REVIEW → COORDINATION_REVIEW → PENDING_SIGNATURE → ACTIVE 
 | GET | `/api/v1/agreements/{id}/document` | Descargar PDF firmado de Documenso |
 | POST | `/api/v1/agreements/{id}/approve-certificate` | Aprobar constancia (solo COORDINATOR/ADMIN; requiere FINISHED) |
 | GET | `/api/v1/agreements/{id}/certificate` | Descargar constancia de culminación (requiere FINISHED + aprobación) |
+| GET | `/api/v1/universities` | Listar universidades (cualquier autenticado, para selectores ADMIN) |
 | GET | `/api/v1/agreements/{id}/visits` | Listar visitas |
 | POST | `/api/v1/agreements/{id}/visits` | Registrar visita (ACTIVE) |
 | POST | `/api/v1/webhooks/signature` | Webhook Documenso → activa convenio |
@@ -152,6 +153,13 @@ Nuevos queries en `AgreementRepository`:
 
 `AllowedRole` ahora incluye `COORDINATOR`, pero el service aplica jerarquía: **solo ADMIN puede crear COORDINATOR**; un COORDINATOR no puede crear otro COORDINATOR (evita escalada horizontal de privilegios). COORDINATOR sigue pudiendo crear ACADEMIC_ADVISOR / COMPANY_TUTOR / SECRETARY en su tenant.
 
+Endpoint complementario: **`GET /api/v1/universities`** (v0.10.0) para que el ADMIN pueda seleccionar la universidad del nuevo usuario desde un dropdown. Cualquier autenticado puede listarlas.
+
+## 9d. Límite de uploads (v0.10.0)
+
+- `application.yml`: `spring.servlet.multipart.max-file-size: 5MB` + `max-request-size: 5MB`. Alineado con la validación local del frontend.
+- `GlobalExceptionHandler` maneja `MaxUploadSizeExceededException` → **HTTP 413 Payload Too Large** con RFC 7807 y mensaje parametrizado con el límite configurado.
+
 ## 9c. `agreement_documents` (V1.1.0)
 
 Documentos subidos por usuarios (CV, CONTRACT, NATIONAL_ID, EPS, ARL, WORK_PLAN, NIT, RUT, CAMARA_COMERCIO) viven en una tabla normalizada `agreement_documents` con UK `(agreement_id, document_type)` — 1 fila viva por tipo, re-upload hace UPSERT via `ON CONFLICT ON CONSTRAINT uk_agreement_documents DO UPDATE` (atómico, sin TOCTOU). Al re-subir, el archivo anterior en R2 se borra en el mismo flujo; si el borrado falla se loggea como warning (orphan tolerado frente a fallar la request).
@@ -168,11 +176,41 @@ Los artefactos generados por el sistema (`documenso_document_id`, `pdf_cloud_url
 
 `AgreementResponse` ya no incluye los 9 file keys. El frontend consulta `GET /agreements/{id}/documents` para listar metadata (sin fileKey — no se expone el key R2 para evitar enumeración).
 
-## 10. Pendiente backend
+## 10. Preparación para despliegue de demo (v0.10.0)
+
+Backend está **deploy-ready**. Checklist de lo que está listo vs. lo que debe hacerse antes de exponerse a usuarios reales:
+
+### ✅ Listo para demo
+
+- Java 21 (runtime LTS, amplio soporte en PaaS: Railway, Render, Fly.io, Heroku-like).
+- Spring Boot 4.0.5 con `spring.config.import=optional:file:.env` (env-first, sin defaults hardcoded de secretos).
+- Multipart con límite 5 MB.
+- Flyway aplica las 9 migraciones al arranque (`V1.0.0 → V1.0.8 + V1.1.0 + V1.1.1`).
+- JWT con fail-fast si `APP_JWT_SECRET` no está seteado.
+- 80 tests pasando.
+
+### ⚠️ Pendientes antes de producción real (bloquean solo "prod", no la demo)
+
+1. **Rotar credenciales** expuestas en el histórico público:
+   - R2 access/secret keys (generar par nuevo en Cloudflare + actualizar `.env`).
+   - Documenso API token (regenerar desde el dashboard).
+   - JWT secret (cualquier `openssl rand -base64 48`).
+2. **Separar seed de test data** en Flyway — V1.0.1, V1.0.2, V1.0.4, parte de V1.0.7 contienen usuarios/passwords de prueba. Requiere `spring.flyway.locations` por perfil (`dev` vs `prod`).
+3. **Bajar nivel de logging** en prod: `application.yml` tiene `org.hibernate.SQL: DEBUG` y `orm.jdbc.bind: TRACE` — cambiar a `INFO`/`WARN` para producción.
+4. **Desactivar Swagger UI en prod**: setear `springdoc.swagger-ui.enabled=false` y `springdoc.api-docs.enabled=false` cuando el perfil sea `prod`.
+5. **CORS origins**: `APP_ALLOWED_ORIGINS` debe configurarse con el dominio real del frontend en producción (no `localhost`).
+6. **`spring.jpa.show-sql: true`** — deshabilitar en prod, solo útil en dev/test.
+7. **Deuda diferida** (no bloqueantes para demo): `TIMESTAMPTZ` en las 10 tablas, `@Lock` para concurrencia del cache de constancia, bypass de tenant si `universityId` null en JWT no-ADMIN, magic numbers dispersos, limpieza periódica de objetos R2 huérfanos.
+
+### Variables de entorno obligatorias en prod
+
+`APP_JWT_SECRET`, `APP_STORAGE_ENDPOINT_URL`, `APP_STORAGE_ACCESS_KEY`, `APP_STORAGE_SECRET_KEY`, `DOCUMENSO_TOKEN`, `DB_HOST/PORT/NAME/USER/PASSWORD`, `APP_ALLOWED_ORIGINS`, `DOCUMENSO_WEBHOOK_SECRET`.
+
+## 11. Pendiente backend
 
 | Ítem | Prioridad |
 |------|-----------|
-| *(nada pendiente para MVP)* | — |
+| *(nada pendiente para el MVP de demo)* | — |
 
 ### Deuda técnica documentada (post-MVP)
 
@@ -185,7 +223,7 @@ Los artefactos generados por el sistema (`documenso_document_id`, `pdf_cloud_url
 
 ---
 
-## 11. Seed data de pruebas
+## 12. Seed data de pruebas
 
 - Universidad Remington id=1
 - `admin@convenia.app` / `Admin1234!` (ADMIN)

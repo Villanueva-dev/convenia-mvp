@@ -244,4 +244,18 @@ public interface AgreementService {
      * @throws org.springframework.security.access.AccessDeniedException if the user is not authorized for this agreement.
      */
     byte[] downloadCertificate(Long id, JwtUser currentUser);
+
+    /**
+     * Renders the agreement PDF exactly as it would be sent to Documenso, but
+     * WITHOUT creating an envelope. Intended for offline calibration of
+     * signature field coordinates.
+     *
+     * <p>Restricted to COORDINATOR/ADMIN. No status restriction: callable on
+     * any agreement in any state. Does not persist anything.</p>
+     *
+     * @param id          Agreement unique identifier.
+     * @param currentUser Must be COORDINATOR (same tenant) or ADMIN.
+     * @return Raw PDF bytes (same bytes that endorseAgreement would generate).
+     */
+    byte[] generateAgreementPdfPreview(Long id, JwtUser currentUser);
 }

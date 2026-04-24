@@ -1,5 +1,88 @@
 # Convenia API — Changelog
 
+## [0.10.0] — 2026-04-24
+
+### Contexto
+Preparación para el despliegue de la demo del MVP. Tres cambios funcionales (multipart 5 MB + handler 413, directorio de universidades para selectores) y un ajuste de runtime (downgrade a Java 21 LTS para compatibilidad con PaaS).
+
+---
+
+### Límite de multipart uploads
+
+**Por qué:** el límite por defecto de Spring Boot es **1 MB**, pero el frontend valida hasta 5 MB localmente. Un PDF escaneado de CV o contrato casi siempre pasa del MB, así que el upload fallaba con `MaxUploadSizeExceededException` mapeado a 500 genérico — error confuso para el usuario.
+
+**Cambios:**
+- `application.yml`: bloque nuevo
+  ```yaml
+  spring:
+    servlet:
+      multipart:
+        max-file-size:    5MB
+        max-request-size: 5MB
+  ```
+- `GlobalExceptionHandler`: nuevo `@ExceptionHandler(MaxUploadSizeExceededException.class)` → **HTTP 413 Payload Too Large** con RFC 7807. El mensaje se parametriza con `ex.getMaxUploadSize()` así que si mañana se cambia el límite, el texto lo refleja automáticamente: *"El archivo supera el tamaño máximo permitido (5 MB). Comprime el PDF o reduce su resolución e intenta de nuevo."*
+
+**Defense in depth:** el frontend valida primero (`onFileSelected`, 5 MB) y el backend también. Mismo número en ambos lados; si se pasa modificando la request directamente, el backend rechaza con mensaje claro.
+
+---
+
+### `GET /api/v1/universities` — directorio de universidades
+
+**Por qué:** `UserServiceImpl` permite que `ADMIN` cree usuarios en cualquier tenant especificando `universityId` en el request. El frontend no tenía forma de descubrir qué universidades existen, así que el form de alta de usuarios fallaba cuando el ADMIN intentaba crear una secretaría (`auth.universityId()` es `null` para ADMIN).
+
+**Cambios:**
+- `model/dto/UniversitySummaryResponse.java` — DTO compacto `{id, name, shortName, city}` con factory `from(University)`.
+- `controller/UniversityController.java` — `GET /api/v1/universities`, `@SecurityRequirement(name = "bearerAuth")`. Sin `@PreAuthorize` específico: cualquier autenticado puede listar. Ordenado alfabéticamente por nombre.
+
+**Consumidor frontend:** `UserService` del frontend ahora precarga universidades cuando el rol es `ADMIN` y las muestra como dropdown. Si hay una sola, queda preseleccionada. Detalle en el CHANGELOG del frontend.
+
+---
+
+### Java 21 (downgrade desde Java 25)
+
+**Por qué:** Java 25 salió hace poco y las PaaS más comunes para demos (Railway, Render, Fly.io, Heroku-like) no lo ofrecen como runtime soportado todavía. Java 21 LTS tiene cobertura amplia y todas las features que usamos funcionan igual (records, switch-expressions, pattern matching, virtual threads, sealed types).
+
+**Cambios:**
+- `pom.xml`: `<java.version>21</java.version>`.
+- Sin cambios en código — nada del código usaba features exclusivas de 25.
+- 80/80 tests siguen pasando en Java 21.
+
+**Lecciones:** mantener la versión de Java siempre en LTS (17, 21, 25 cuando tenga 2+ años) para evitar fricción en deploys.
+
+---
+
+### Cambios de código
+
+**Creados:**
+- `src/main/java/com/uniremington/api/convenia/model/dto/UniversitySummaryResponse.java`
+- `src/main/java/com/uniremington/api/convenia/controller/UniversityController.java`
+
+**Modificados:**
+- `src/main/resources/application.yml` — bloque `spring.servlet.multipart`.
+- `src/main/java/com/uniremington/api/convenia/shared/exception/GlobalExceptionHandler.java` — `@ExceptionHandler(MaxUploadSizeExceededException.class)` + import.
+- `pom.xml` — `java.version` 25 → 21.
+
+### Tests
+
+**80 → 80** (sin nuevos tests en esta versión; Java 21 los ejecuta limpios).
+
+---
+
+### Preparación para demo — checklist
+
+Backend está deploy-ready. Pendientes antes de **producción real** (no bloquean la demo):
+
+- Rotar credenciales expuestas en histórico git (R2, Documenso, JWT).
+- Separar seeds de test data en Flyway por perfil.
+- Bajar logging level (`SQL: DEBUG` → `INFO`, `jdbc.bind: TRACE` → `WARN`).
+- Deshabilitar Swagger UI en perfil `prod`.
+- `APP_ALLOWED_ORIGINS` con dominio real (no localhost).
+- Deshabilitar `spring.jpa.show-sql`.
+
+Ver detalle completo en `context-project.md §10`.
+
+---
+
 ## [0.9.0] — 2026-04-23
 
 ### Contexto
