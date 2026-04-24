@@ -213,6 +213,20 @@ public interface AgreementService {
     byte[] downloadDocument(Long id, DocumentType type, JwtUser currentUser);
 
     /**
+     * Approves the certificate of completion so that participants can download it.
+     *
+     * <p>Only callable by {@code COORDINATOR} or {@code ADMIN}, when the agreement
+     * is in {@link com.uniremington.api.convenia.model.entity.AgreementStatus#FINISHED}
+     * and the certificate has not yet been approved. Idempotency is NOT offered:
+     * a second call on an already-approved agreement is rejected with 409.</p>
+     *
+     * @param id          Agreement unique identifier.
+     * @param currentUser Must be COORDINATOR (same tenant) or ADMIN.
+     * @return The updated agreement, now flagged as approved.
+     */
+    AgreementResponse approveCertificate(Long id, JwtUser currentUser);
+
+    /**
      * Downloads the "Constancia de Culminación" PDF for a FINISHED agreement.
      *
      * <p>Generates the PDF on the first request and caches it in Cloudflare R2

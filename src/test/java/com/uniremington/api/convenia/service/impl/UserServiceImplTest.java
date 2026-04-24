@@ -97,8 +97,8 @@ class UserServiceImplTest {
     }
 
     @ParameterizedTest
-    @EnumSource(AllowedRole.class)
-    void allAllowedRolesMapToUserRole(AllowedRole allowedRole) {
+    @EnumSource(value = AllowedRole.class, names = {"ACADEMIC_ADVISOR", "COMPANY_TUTOR", "SECRETARY"})
+    void coordinatorCanCreateOperationalRoles(AllowedRole allowedRole) {
         var university  = TestFixtures.university(1L);
         var coordinator = TestFixtures.jwtUser(5L, "COORDINATOR", 1L);
         var request     = new CreateUserRequest("Test User", "user@test.edu.co", "password1", 1L, allowedRole);
@@ -107,6 +107,7 @@ class UserServiceImplTest {
             case ACADEMIC_ADVISOR -> UserRole.ACADEMIC_ADVISOR;
             case COMPANY_TUTOR    -> UserRole.COMPANY_TUTOR;
             case SECRETARY        -> UserRole.SECRETARY;
+            case COORDINATOR      -> throw new IllegalStateException("not covered here");
         };
         var savedUser = TestFixtures.user(50L, expectedRole, university);
 
@@ -118,6 +119,34 @@ class UserServiceImplTest {
         var result = service.createManagedUser(request, coordinator);
 
         assertThat(result.role()).isEqualTo(expectedRole.name());
+    }
+
+    @Test
+    void adminCanCreateCoordinator() {
+        var university = TestFixtures.university(1L);
+        var admin      = TestFixtures.jwtUser(1L, "ADMIN", null);
+        var request    = new CreateUserRequest("New Coord", "coord@test.edu.co", "password1", 1L, AllowedRole.COORDINATOR);
+        var saved      = TestFixtures.user(60L, UserRole.COORDINATOR, university);
+
+        when(userRepository.existsByEmail(anyString())).thenReturn(false);
+        when(universityRepository.findById(1L)).thenReturn(Optional.of(university));
+        when(passwordEncoder.encode(anyString())).thenReturn("hashed");
+        when(userRepository.save(any())).thenReturn(saved);
+
+        var result = service.createManagedUser(request, admin);
+
+        assertThat(result.role()).isEqualTo(UserRole.COORDINATOR.name());
+    }
+
+    @Test
+    void coordinatorCannotCreateAnotherCoordinator() {
+        var coordinator = TestFixtures.jwtUser(5L, "COORDINATOR", 1L);
+        var request     = new CreateUserRequest("Would-be Coord", "evil@test.edu.co", "password1", 1L, AllowedRole.COORDINATOR);
+
+        assertThatThrownBy(() -> service.createManagedUser(request, coordinator))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class)
+                .hasMessageContaining("Only ADMIN");
+        verify(userRepository, never()).save(any());
     }
 
     @Test

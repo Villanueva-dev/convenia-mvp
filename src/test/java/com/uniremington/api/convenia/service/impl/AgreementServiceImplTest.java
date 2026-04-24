@@ -22,6 +22,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.access.AccessDeniedException;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -387,6 +388,89 @@ class AgreementServiceImplTest {
             assertThatThrownBy(() -> service.getAgreement(1L, otherStudent))
                     .isInstanceOf(AccessDeniedException.class);
         }
+
+        @Test
+        void advisorNotAssignedCannotReadAgreement() {
+            var agreement    = activeAgreement();
+            var otherAdvisor = TestFixtures.jwtUser(99L, "ACADEMIC_ADVISOR", 1L);
+
+            when(agreementRepository.findById(1L)).thenReturn(Optional.of(agreement));
+
+            assertThatThrownBy(() -> service.getAgreement(1L, otherAdvisor))
+                    .isInstanceOf(AccessDeniedException.class);
+        }
+
+        @Test
+        void tutorNotAssignedCannotReadAgreement() {
+            var agreement  = activeAgreement();
+            var otherTutor = TestFixtures.jwtUser(99L, "COMPANY_TUTOR", 1L);
+
+            when(agreementRepository.findById(1L)).thenReturn(Optional.of(agreement));
+
+            assertThatThrownBy(() -> service.getAgreement(1L, otherTutor))
+                    .isInstanceOf(AccessDeniedException.class);
+        }
+
+        @Test
+        void coordinatorInSameTenantCanReadAnyAgreement() {
+            var agreement   = activeAgreement();
+            var coordinator = TestFixtures.jwtUser(5L, "COORDINATOR", 1L);
+
+            when(agreementRepository.findById(1L)).thenReturn(Optional.of(agreement));
+            when(agreementMapper.toResponse(any())).thenReturn(TestFixtures.dummyAgreementResponse());
+
+            assertThatCode(() -> service.getAgreement(1L, coordinator)).doesNotThrowAnyException();
+        }
+    }
+
+    // ── listAgreements scoping by role ────────────────────────────────────────
+
+    @Nested
+    class ListAgreementsByRole {
+
+        @Test
+        void advisorListsOnlyOwnAssignments() {
+            var advisorJwt = TestFixtures.jwtUser(10L, "ACADEMIC_ADVISOR", 1L);
+            var agreement  = activeAgreement();
+
+            when(agreementRepository.findByAcademicAdvisorIdOrderByCreatedAtDesc(10L))
+                    .thenReturn(List.of(agreement));
+            when(agreementMapper.toSummary(agreement)).thenReturn(null);
+
+            service.listAgreements(advisorJwt);
+
+            verify(agreementRepository).findByAcademicAdvisorIdOrderByCreatedAtDesc(10L);
+            verify(agreementRepository, never()).findByUniversityIdOrderByCreatedAtDesc(anyLong());
+        }
+
+        @Test
+        void tutorListsOnlyOwnAssignments() {
+            var tutorJwt  = TestFixtures.jwtUser(20L, "COMPANY_TUTOR", 1L);
+            var agreement = activeAgreement();
+
+            when(agreementRepository.findByCompanyRepIdOrderByCreatedAtDesc(20L))
+                    .thenReturn(List.of(agreement));
+            when(agreementMapper.toSummary(agreement)).thenReturn(null);
+
+            service.listAgreements(tutorJwt);
+
+            verify(agreementRepository).findByCompanyRepIdOrderByCreatedAtDesc(20L);
+            verify(agreementRepository, never()).findByUniversityIdOrderByCreatedAtDesc(anyLong());
+        }
+
+        @Test
+        void coordinatorListsEntireTenant() {
+            var coordinator = TestFixtures.jwtUser(5L, "COORDINATOR", 1L);
+
+            when(agreementRepository.findByUniversityIdOrderByCreatedAtDesc(1L))
+                    .thenReturn(List.of());
+
+            service.listAgreements(coordinator);
+
+            verify(agreementRepository).findByUniversityIdOrderByCreatedAtDesc(1L);
+            verify(agreementRepository, never()).findByAcademicAdvisorIdOrderByCreatedAtDesc(anyLong());
+            verify(agreementRepository, never()).findByCompanyRepIdOrderByCreatedAtDesc(anyLong());
+        }
     }
 
     // ── not found ─────────────────────────────────────────────────────────────
@@ -555,6 +639,86 @@ class AgreementServiceImplTest {
             when(agreementRepository.findById(1L)).thenReturn(Optional.of(agreement));
 
             assertThatThrownBy(() -> service.downloadCertificate(1L, secretary))
+                    .isInstanceOf(AccessDeniedException.class);
+        }
+
+        @Test
+        void deniesDownloadUntilCertificateApproved() {
+            var agreement = finishedAgreement();
+            agreement.setCertificateApprovedAt(null);
+            agreement.setCertificateApprovedBy(null);
+            var currentUser = TestFixtures.jwtUser(30L, "STUDENT", 1L);
+
+            when(agreementRepository.findById(1L)).thenReturn(Optional.of(agreement));
+
+            assertThatThrownBy(() -> service.downloadCertificate(1L, currentUser))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("not been approved");
+            verify(pdfGenerationService, never()).generateCertificatePdf(any());
+            verify(storageService, never()).download(anyString());
+        }
+    }
+
+    // ── approveCertificate ────────────────────────────────────────────────────
+
+    @Nested
+    class ApproveCertificate {
+
+        @Test
+        void coordinatorApprovesFinishedAgreement() {
+            var agreement = finishedAgreement();
+            agreement.setCertificateApprovedAt(null);
+            agreement.setCertificateApprovedBy(null);
+            var coordinator = TestFixtures.jwtUser(5L, "COORDINATOR", 1L);
+            var coordinatorUser = TestFixtures.user(5L, UserRole.COORDINATOR, university);
+
+            when(agreementRepository.findById(1L)).thenReturn(Optional.of(agreement));
+            when(userRepository.getReferenceById(5L)).thenReturn(coordinatorUser);
+            when(agreementRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+            when(agreementMapper.toResponse(any())).thenReturn(TestFixtures.dummyAgreementResponse());
+
+            service.approveCertificate(1L, coordinator);
+
+            assertThat(agreement.getCertificateApprovedAt()).isNotNull();
+            assertThat(agreement.getCertificateApprovedBy()).isEqualTo(coordinatorUser);
+        }
+
+        @Test
+        void rejectsWhenAgreementNotFinished() {
+            var agreement = activeAgreement();
+            var coordinator = TestFixtures.jwtUser(5L, "COORDINATOR", 1L);
+
+            when(agreementRepository.findById(1L)).thenReturn(Optional.of(agreement));
+
+            assertThatThrownBy(() -> service.approveCertificate(1L, coordinator))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("FINISHED");
+            verify(agreementRepository, never()).save(any());
+        }
+
+        @Test
+        void rejectsWhenAlreadyApproved() {
+            var agreement = finishedAgreement();           // already approved in helper
+            var coordinator = TestFixtures.jwtUser(5L, "COORDINATOR", 1L);
+
+            when(agreementRepository.findById(1L)).thenReturn(Optional.of(agreement));
+
+            assertThatThrownBy(() -> service.approveCertificate(1L, coordinator))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("already been approved");
+            verify(agreementRepository, never()).save(any());
+        }
+
+        @Test
+        void rejectsCrossTenantApproval() {
+            var agreement = finishedAgreement();
+            agreement.setCertificateApprovedAt(null);
+            agreement.setCertificateApprovedBy(null);
+            var foreignCoordinator = TestFixtures.jwtUser(5L, "COORDINATOR", 2L);
+
+            when(agreementRepository.findById(1L)).thenReturn(Optional.of(agreement));
+
+            assertThatThrownBy(() -> service.approveCertificate(1L, foreignCoordinator))
                     .isInstanceOf(AccessDeniedException.class);
         }
     }
@@ -874,12 +1038,20 @@ class AgreementServiceImplTest {
         return a;
     }
 
+    /**
+     * A FINISHED agreement with the certificate already approved by coordination.
+     * This is the "happy-path baseline" for certificate download tests — tests
+     * that specifically exercise the unapproved path should null the approval
+     * fields after calling this helper.
+     */
     private Agreement finishedAgreement() {
         var a = TestFixtures.activeAgreement(university, student, company, advisor, tutor);
         a.setStatus(AgreementStatus.FINISHED);
         a.setAdvisorGrade(new BigDecimal("4.0"));
         a.setCompanyGrade(new BigDecimal("3.0"));
         a.setFinalGrade(new BigDecimal("3.5"));
+        a.setCertificateApprovedAt(LocalDateTime.now().minusDays(1));
+        a.setCertificateApprovedBy(TestFixtures.user(5L, UserRole.COORDINATOR, university));
         return a;
     }
 }

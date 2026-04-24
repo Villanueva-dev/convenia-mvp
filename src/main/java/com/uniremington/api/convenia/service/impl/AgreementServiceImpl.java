@@ -108,8 +108,7 @@ public class AgreementServiceImpl implements AgreementService {
     @Transactional(readOnly = true)
     public AgreementResponse getAgreement(Long id, JwtUser currentUser) {
         var agreement = loadAgreement(id);
-        assertTenantAccess(agreement, currentUser);
-        assertOwnershipIfStudent(agreement, currentUser);
+        assertAgreementReadAccess(agreement, currentUser);
         return agreementMapper.toResponse(agreement);
     }
 
@@ -124,9 +123,14 @@ public class AgreementServiceImpl implements AgreementService {
                                 "No student profile found for current user"));
                 yield agreementRepository.findByStudentIdOrderByCreatedAtDesc(student.getId());
             }
+            case "ACADEMIC_ADVISOR" ->
+                    agreementRepository.findByAcademicAdvisorIdOrderByCreatedAtDesc(currentUser.getUserId());
+            case "COMPANY_TUTOR" ->
+                    agreementRepository.findByCompanyRepIdOrderByCreatedAtDesc(currentUser.getUserId());
             case "ADMIN" -> currentUser.getUniversityId() == null
                     ? agreementRepository.findAll()
                     : agreementRepository.findByUniversityIdOrderByCreatedAtDesc(currentUser.getUniversityId());
+            // COORDINATOR and SECRETARY see the full tenant — they validate and coordinate across agreements.
             default -> agreementRepository.findByUniversityIdOrderByCreatedAtDesc(currentUser.getUniversityId());
         };
 
@@ -518,11 +522,37 @@ public class AgreementServiceImpl implements AgreementService {
      */
     @Override
     @Transactional
+    public AgreementResponse approveCertificate(Long id, JwtUser currentUser) {
+        var agreement = loadAgreement(id);
+        assertTenantAccess(agreement, currentUser);
+        assertStatus(agreement, AgreementStatus.FINISHED,
+                "Certificate can only be approved once the agreement is FINISHED");
+
+        if (agreement.getCertificateApprovedAt() != null) {
+            throw new IllegalStateException(
+                    "Certificate has already been approved for this agreement");
+        }
+
+        var approver = userRepository.getReferenceById(currentUser.getUserId());
+        agreement.setCertificateApprovedBy(approver);
+        agreement.setCertificateApprovedAt(java.time.LocalDateTime.now());
+        var saved = agreementRepository.save(agreement);
+        log.info("Certificate approved for agreement id={} by user={}", id, currentUser.getUserId());
+        return agreementMapper.toResponse(saved);
+    }
+
+    @Override
+    @Transactional
     public byte[] downloadCertificate(Long id, JwtUser currentUser) {
         var agreement = loadAgreement(id);
         assertCertificateAccess(agreement, currentUser);
         assertStatus(agreement, AgreementStatus.FINISHED,
                 "Certificate is only available once the agreement is FINISHED");
+
+        if (agreement.getCertificateApprovedAt() == null) {
+            throw new IllegalStateException(
+                    "Certificate has not been approved by coordination yet");
+        }
 
         if (agreement.getCertificateFileKey() != null) {
             return storageService.download(agreement.getCertificateFileKey());
@@ -577,6 +607,50 @@ public class AgreementServiceImpl implements AgreementService {
         if ("STUDENT".equals(user.getRole()) &&
                 !agreement.getStudent().getUser().getId().equals(user.getUserId())) {
             throw new AccessDeniedException("You can only access your own agreements");
+        }
+    }
+
+    /**
+     * Per-role access control for reading a single agreement (detail view).
+     *
+     * <p>ADMIN bypasses tenancy. Other roles require tenant match plus:</p>
+     * <ul>
+     *   <li>COORDINATOR and SECRETARY — allowed (they coordinate / validate).</li>
+     *   <li>STUDENT — only the owner.</li>
+     *   <li>ACADEMIC_ADVISOR / COMPANY_TUTOR — only if assigned to this agreement.</li>
+     *   <li>Any other role — denied.</li>
+     * </ul>
+     *
+     * <p>Without this check, a non-assigned advisor/tutor in the same tenant can
+     * read agreements that are not theirs (IDOR).</p>
+     */
+    private void assertAgreementReadAccess(Agreement agreement, JwtUser user) {
+        if ("ADMIN".equals(user.getRole())) {
+            return;
+        }
+        assertTenantAccess(agreement, user);
+
+        switch (user.getRole()) {
+            case "COORDINATOR", "SECRETARY" -> { /* allowed within tenant */ }
+            case "STUDENT" -> {
+                if (!agreement.getStudent().getUser().getId().equals(user.getUserId())) {
+                    throw new AccessDeniedException("You can only access your own agreements");
+                }
+            }
+            case "ACADEMIC_ADVISOR" -> {
+                if (agreement.getAcademicAdvisor() == null ||
+                        !agreement.getAcademicAdvisor().getId().equals(user.getUserId())) {
+                    throw new AccessDeniedException("You are not the assigned advisor for this agreement");
+                }
+            }
+            case "COMPANY_TUTOR" -> {
+                if (agreement.getCompanyRep() == null ||
+                        !agreement.getCompanyRep().getId().equals(user.getUserId())) {
+                    throw new AccessDeniedException("You are not the assigned tutor for this agreement");
+                }
+            }
+            default -> throw new AccessDeniedException(
+                    "Role " + user.getRole() + " cannot access this agreement");
         }
     }
 

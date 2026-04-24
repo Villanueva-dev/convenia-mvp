@@ -30,6 +30,26 @@ public interface AgreementRepository extends JpaRepository<Agreement, Long> {
     List<Agreement> findByStudentIdOrderByCreatedAtDesc(Long studentId);
 
     /**
+     * Retrieves all agreements where the given user is the assigned academic advisor,
+     * ordered by creation date descending. Used to scope list views for the
+     * {@code ACADEMIC_ADVISOR} role so advisors only see their own assignments.
+     *
+     * @param academicAdvisorId The user ID of the assigned advisor.
+     * @return List of agreements where the user is the assigned advisor.
+     */
+    List<Agreement> findByAcademicAdvisorIdOrderByCreatedAtDesc(Long academicAdvisorId);
+
+    /**
+     * Retrieves all agreements where the given user is the assigned company
+     * representative, ordered by creation date descending. Used to scope list
+     * views for the {@code COMPANY_TUTOR} role.
+     *
+     * @param companyRepId The user ID of the assigned company tutor.
+     * @return List of agreements where the user is the assigned tutor.
+     */
+    List<Agreement> findByCompanyRepIdOrderByCreatedAtDesc(Long companyRepId);
+
+    /**
      * Retrieves all agreements within a university filtered by status.
      *
      * @param universityId The tenant university ID.

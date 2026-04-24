@@ -364,6 +364,24 @@ public class AgreementController {
 
     // ── Certificate of completion ────────────────────────────────────────────
 
+    @Operation(summary = "Approve certificate of completion",
+            description = "Marks the constancia de culminación as approved so it can be "
+                    + "downloaded by the participants. Only COORDINATOR or ADMIN may approve, "
+                    + "and only when the agreement is FINISHED and not already approved.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Agreement with approval fields populated"),
+            @ApiResponse(responseCode = "403", description = "Role not allowed or cross-tenant"),
+            @ApiResponse(responseCode = "409", description = "Agreement not FINISHED or already approved"),
+            @ApiResponse(responseCode = "404", description = "Agreement not found")
+    })
+    @PostMapping("/{id}/approve-certificate")
+    @PreAuthorize("hasAnyRole('COORDINATOR', 'ADMIN')")
+    public ResponseEntity<AgreementResponse> approveCertificate(
+            @PathVariable Long id,
+            @AuthenticationPrincipal JwtUser currentUser) {
+        return ResponseEntity.ok(agreementService.approveCertificate(id, currentUser));
+    }
+
     @Operation(summary = "Download certificate of completion",
             description = "Issues the 'Constancia de Culminación' for a FINISHED agreement. "
                     + "Generated once per agreement and cached in R2. Accessible to the owning "

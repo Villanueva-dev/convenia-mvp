@@ -2,7 +2,7 @@
 
 ## 1. Estado del Proyecto
 
-**Versión backend:** 0.8.0 — Backend MVP completo + normalización fase 1 (documentos extraídos de `agreements`).
+**Versión backend:** 0.9.0 — MVP completo end-to-end: normalización de documentos, IDOR fix en agreements, aprobación de constancia por coordinación, alta de COORDINATOR vía ADMIN.
 **Frontend:** Angular 21, en desarrollo (`convenia-web/`).
 **Prioridad actual:** Terminar el frontend para demo completa del flujo MVP + hardening pre-producción (secretos y separación de seeds por perfil).
 
@@ -75,7 +75,8 @@ DRAFT → ADMIN_REVIEW → COORDINATION_REVIEW → PENDING_SIGNATURE → ACTIVE 
 | GET | `/api/v1/agreements/{id}/documents` | Listar metadata de documentos subidos |
 | GET | `/api/v1/agreements/{id}/documents/{type}` | Descargar documento de R2 |
 | GET | `/api/v1/agreements/{id}/document` | Descargar PDF firmado de Documenso |
-| GET | `/api/v1/agreements/{id}/certificate` | Descargar constancia de culminación (FINISHED) |
+| POST | `/api/v1/agreements/{id}/approve-certificate` | Aprobar constancia (solo COORDINATOR/ADMIN; requiere FINISHED) |
+| GET | `/api/v1/agreements/{id}/certificate` | Descargar constancia de culminación (requiere FINISHED + aprobación) |
 | GET | `/api/v1/agreements/{id}/visits` | Listar visitas |
 | POST | `/api/v1/agreements/{id}/visits` | Registrar visita (ACTIVE) |
 | POST | `/api/v1/webhooks/signature` | Webhook Documenso → activa convenio |
@@ -96,6 +97,7 @@ DRAFT → ADMIN_REVIEW → COORDINATION_REVIEW → PENDING_SIGNATURE → ACTIVE 
 | V1.0.7 | `VALIDATE CONSTRAINT` de V1.0.6 + `users.full_name NOT NULL` con backfill en 4 etapas |
 | V1.0.8 | `agreements.certificate_file_key VARCHAR(255) NULL` — cache de R2 de la constancia |
 | V1.1.0 | Normalización fase 1: nueva tabla `agreement_documents` con UK `(agreement_id, document_type)`; backfill desde los 9 `*_file_key` de `agreements`; DROP de las 9 columnas. |
+| V1.1.1 | `agreements.certificate_approved_at TIMESTAMP NULL` + `agreements.certificate_approved_by_id BIGINT FK(users)` + CHECK `chk_certificate_approval_pair` (ambos NULL o ambos populados). |
 
 **Diferido post-MVP:** `TIMESTAMPTZ` en las 8 tablas (requiere cambiar `AuditableEntity.LocalDateTime` → `Instant` y añadir `spring.jpa.properties.hibernate.jdbc.time_zone=UTC`).
 
@@ -112,24 +114,45 @@ Se muestra en el PDF del convenio como **Docente Asesor** (cláusula 8ª y firma
 
 ---
 
-## 8. Constancia de culminación (V1.0.8)
+## 8. Constancia de culminación (V1.0.8 + V1.1.1)
 
-Endpoint `GET /api/v1/agreements/{id}/certificate` — emite el PDF oficial cuando el convenio está en `FINISHED`.
+Dos endpoints — la emisión requiere **aprobación explícita** por parte de la coordinación antes de que cualquier participante pueda descargar.
 
-- **Storage**: cache-on-first-write en R2 con key `certificates/{universityId}/{agreementId}.pdf`. La segunda llamada sirve desde R2.
-- **Template**: `constancia_culminacion.html` (Thymeleaf, gitignored).
-- **Contenido**: estudiante (nombre + cédula + programa), empresa (razón social + NIT), fechas, horas semanales + horas totales calculadas, asesor, tutor, notas (50 %/50 %) y nota final.
-- **Autorización** (`assertCertificateAccess`):
-  - `ADMIN` — cross-tenant.
-  - `COORDINATOR` — dentro del mismo `university_id`.
-  - `STUDENT` — solo si es el dueño del convenio.
-  - `ACADEMIC_ADVISOR` — solo si está asignado al convenio.
-  - `COMPANY_TUTOR` — solo si está asignado al convenio.
-  - `SECRETARY` y cualquier otro rol → `AccessDeniedException`.
+- `POST /api/v1/agreements/{id}/approve-certificate` — solo `COORDINATOR` o `ADMIN`; agreement debe estar en `FINISHED`; si ya fue aprobada responde 409. Setea `certificateApprovedAt = now()` y `certificateApprovedBy = user`.
+- `GET /api/v1/agreements/{id}/certificate` — emite/sirve el PDF. Devuelve 409 mientras `certificateApprovedAt` sea null.
+
+Storage y contenido del PDF sin cambios:
+- Cache-on-first-write en R2: `certificates/{universityId}/{agreementId}.pdf`.
+- Template `constancia_culminacion.html` (Thymeleaf, gitignored).
+- Contenido: estudiante (nombre + cédula + programa), empresa (razón social + NIT), fechas, horas semanales + horas totales, asesor, tutor, notas (50%/50%) y nota final.
+
+**Autorización de descarga** (`assertCertificateAccess`):
+- `ADMIN` — cross-tenant.
+- `COORDINATOR` — dentro del mismo `university_id`.
+- `STUDENT` — solo si es el dueño del convenio.
+- `ACADEMIC_ADVISOR` / `COMPANY_TUTOR` — solo si están asignados.
+- `SECRETARY` y cualquier otro rol → `AccessDeniedException`.
+
+**Invariant DB** (V1.1.1): CHECK `chk_certificate_approval_pair` garantiza que `certificate_approved_at` y `certificate_approved_by_id` son ambos NULL o ambos populados.
 
 ---
 
-## 9. `agreement_documents` (V1.1.0)
+## 9a. Acceso a agreements (v0.9.0 — IDOR fix)
+
+`listAgreements` y `getAgreement` fueron endurecidos — antes un `ACADEMIC_ADVISOR` o `COMPANY_TUTOR` veía TODOS los convenios de su tenant. Ahora:
+
+- `listAgreements` por rol: STUDENT ve los suyos; ACADEMIC_ADVISOR ve donde está asignado; COMPANY_TUTOR ve donde está asignado; COORDINATOR y SECRETARY ven todo el tenant; ADMIN ve todo.
+- `getAgreement` usa nuevo helper `assertAgreementReadAccess` con las mismas reglas a nivel de detalle (no más IDOR a recursos individuales del mismo tenant).
+
+Nuevos queries en `AgreementRepository`:
+- `findByAcademicAdvisorIdOrderByCreatedAtDesc`
+- `findByCompanyRepIdOrderByCreatedAtDesc`
+
+## 9b. Alta de COORDINATOR (v0.9.0)
+
+`AllowedRole` ahora incluye `COORDINATOR`, pero el service aplica jerarquía: **solo ADMIN puede crear COORDINATOR**; un COORDINATOR no puede crear otro COORDINATOR (evita escalada horizontal de privilegios). COORDINATOR sigue pudiendo crear ACADEMIC_ADVISOR / COMPANY_TUTOR / SECRETARY en su tenant.
+
+## 9c. `agreement_documents` (V1.1.0)
 
 Documentos subidos por usuarios (CV, CONTRACT, NATIONAL_ID, EPS, ARL, WORK_PLAN, NIT, RUT, CAMARA_COMERCIO) viven en una tabla normalizada `agreement_documents` con UK `(agreement_id, document_type)` — 1 fila viva por tipo, re-upload hace UPSERT via `ON CONFLICT ON CONSTRAINT uk_agreement_documents DO UPDATE` (atómico, sin TOCTOU). Al re-subir, el archivo anterior en R2 se borra en el mismo flujo; si el borrado falla se loggea como warning (orphan tolerado frente a fallar la request).
 

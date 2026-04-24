@@ -12,6 +12,7 @@ import com.uniremington.api.convenia.service.UserService;
 import com.uniremington.api.convenia.shared.exception.DuplicateResourceException;
 import com.uniremington.api.convenia.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +28,12 @@ public class UserServiceImpl implements UserService {
     @Override
     @Transactional
     public UserSummaryResponse createManagedUser(CreateUserRequest request, JwtUser currentUser) {
+        // Hierarchy rule: COORDINATOR accounts can only be created by ADMIN.
+        // A COORDINATOR cannot create another COORDINATOR (no peer escalation).
+        if (request.role() == AllowedRole.COORDINATOR && !"ADMIN".equals(currentUser.getRole())) {
+            throw new AccessDeniedException("Only ADMIN can create COORDINATOR accounts");
+        }
+
         Long universityId = "ADMIN".equals(currentUser.getRole())
                 ? request.universityId()
                 : currentUser.getUniversityId();
@@ -54,6 +61,7 @@ public class UserServiceImpl implements UserService {
             case ACADEMIC_ADVISOR -> UserRole.ACADEMIC_ADVISOR;
             case COMPANY_TUTOR    -> UserRole.COMPANY_TUTOR;
             case SECRETARY        -> UserRole.SECRETARY;
+            case COORDINATOR      -> UserRole.COORDINATOR;
         };
     }
 }

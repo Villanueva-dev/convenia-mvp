@@ -1,5 +1,94 @@
 # Convenia API — Changelog
 
+## [0.9.0] — 2026-04-23
+
+### Contexto
+Cierre del MVP end-to-end: bug de seguridad en el listado/detalle de convenios (IDOR entre asesores/tutores del mismo tenant), paso de aprobación formal de la coordinación sobre la constancia de culminación, y habilitación del alta de `COORDINATOR` vía el endpoint de usuarios (que hasta ahora solo dejaba crear roles operativos).
+
+---
+
+### IDOR en agreements — fix (crítico)
+
+**Por qué:** `AgreementServiceImpl.listAgreements` caía en un `default` case que retornaba `findByUniversityIdOrderByCreatedAtDesc(...)` para cualquier rol no STUDENT/ADMIN. Efecto: un `ACADEMIC_ADVISOR` del tenant veía (y podía `GET /{id}` sobre) convenios asignados a **otros asesores**. Mismo problema con `COMPANY_TUTOR`. Detectado en testing manual por el usuario.
+
+**Cambios:**
+- `AgreementRepository`: nuevos finders tipados
+  - `findByAcademicAdvisorIdOrderByCreatedAtDesc(Long)`
+  - `findByCompanyRepIdOrderByCreatedAtDesc(Long)`
+- `AgreementServiceImpl.listAgreements`: `switch` con casos explícitos para `ACADEMIC_ADVISOR` y `COMPANY_TUTOR` (filtro por asignación); `COORDINATOR` y `SECRETARY` siguen viendo todo el tenant (requisito de rol).
+- `getAgreement`: nuevo helper `assertAgreementReadAccess` — mismo patrón que `assertDocumentAccess` y `assertCertificateAccess`. ADMIN cross-tenant; COORDINATOR/SECRETARY tenant-local; STUDENT/ADVISOR/TUTOR solo su asignación.
+
+**Tests:** +6 en la nested class `TenantIsolation` y nueva `ListAgreementsByRole` (advisor/tutor no asignado → 403; list filtrado por rol; coordinator unrestricted within tenant).
+
+---
+
+### Aprobación de constancia de culminación (V1.1.1)
+
+**Por qué:** antes cualquier participante con acceso al agreement FINISHED podía descargar la constancia inmediatamente. No había un paso de validación institucional. Regla de negocio: la coordinación debe dar el visto bueno antes de que el documento sea "oficial".
+
+**Schema (V1.1.1):**
+```sql
+ALTER TABLE agreements
+    ADD COLUMN certificate_approved_at    TIMESTAMP,
+    ADD COLUMN certificate_approved_by_id BIGINT REFERENCES users(id) ON DELETE RESTRICT;
+ALTER TABLE agreements ADD CONSTRAINT chk_certificate_approval_pair
+    CHECK ((certificate_approved_at IS NULL AND certificate_approved_by_id IS NULL)
+        OR (certificate_approved_at IS NOT NULL AND certificate_approved_by_id IS NOT NULL));
+```
+El CHECK es defensa en profundidad: el schema mismo expresa el invariant. Imposible a nivel DB tener "aprobada sin aprobador".
+
+**API:**
+- `POST /api/v1/agreements/{id}/approve-certificate` — `@PreAuthorize('COORDINATOR','ADMIN')`. Valida `status == FINISHED`, tenant, y que no esté ya aprobada (409).
+- `GET /api/v1/agreements/{id}/certificate` — ahora también verifica `certificateApprovedAt != null`; si falta, lanza `IllegalStateException` → 409.
+
+**DTO:** `AgreementResponse` expone `certificateApprovedAt` y `certificateApprovedBy` (solo el userId). Mapper actualizado.
+
+**Tests:** +5 — nested class `ApproveCertificate` (happy, not FINISHED, already approved, cross-tenant) y `DownloadCertificate.deniesDownloadUntilCertificateApproved`.
+
+---
+
+### Alta de COORDINATOR vía endpoint de usuarios
+
+**Por qué:** el enum `AllowedRole` solo tenía `ACADEMIC_ADVISOR`, `COMPANY_TUTOR`, `SECRETARY`. Era imposible crear un nuevo `COORDINATOR` desde el API — el único que había era el del seed V1.0.4 (si existe; en la base actual de dev no hay). Detectado cuando el usuario intentó darse de alta como coordinador y vio 500 por deserialización.
+
+**Cambios:**
+- `AllowedRole`: añadido `COORDINATOR`.
+- `UserServiceImpl.createManagedUser`: nueva regla — si `request.role() == COORDINATOR` y el llamador **no es ADMIN**, lanza `AccessDeniedException("Only ADMIN can create COORDINATOR accounts")`. Previene escalada horizontal de privilegios.
+- Switch `toUserRole` extendido con el caso `COORDINATOR`.
+
+**Tests:** +2 — `adminCanCreateCoordinator` (happy) y `coordinatorCannotCreateAnotherCoordinator` (denied). El test parametrizado `@EnumSource` se acotó a los tres roles operativos para que sus aserciones sigan siendo válidas.
+
+---
+
+### Cambios de código
+
+**Creados:**
+- `src/main/resources/db/migration/V1.1.1__Add_certificate_approval.sql`.
+
+**Modificados:**
+- `model/entity/Agreement.java` — 2 campos nuevos (`certificateApprovedAt`, `certificateApprovedBy` `@ManyToOne`).
+- `model/dto/AgreementResponse.java` + `model/mapper/AgreementMapper.java` — proyección del aprobador.
+- `model/dto/AllowedRole.java` — +COORDINATOR.
+- `service/AgreementService.java` / `service/impl/AgreementServiceImpl.java` — `approveCertificate`, `assertAgreementReadAccess`, check de aprobación en download, scoping por rol en list.
+- `service/impl/UserServiceImpl.java` — jerarquía ADMIN-only para COORDINATOR.
+- `repository/AgreementRepository.java` — 2 finders.
+- `controller/AgreementController.java` — endpoint `POST /{id}/approve-certificate`.
+- `util/TestFixtures.java` — `dummyAgreementResponse` ajustado al nuevo shape.
+
+---
+
+### Tests
+
+**73 → 80** (+7 nuevos, 0 fallos).
+
+- `TenantIsolation` (+3): advisor no asignado denegado, tutor no asignado denegado, coordinator mismo-tenant OK.
+- `ListAgreementsByRole` (+3): advisor filtrado por asignación, tutor filtrado, coordinator ve todo el tenant.
+- `DownloadCertificate.deniesDownloadUntilCertificateApproved` (+1).
+- `ApproveCertificate` (+4): happy, wrong status, already approved, cross-tenant.
+- `UserServiceImplTest` (+2): admin crea coordinator, coordinator denegado para crear otro coordinator.
+
+---
+
 ## [0.8.0] — 2026-04-23
 
 ### Contexto

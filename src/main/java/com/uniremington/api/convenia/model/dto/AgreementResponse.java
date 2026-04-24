@@ -36,6 +36,8 @@ import java.time.LocalDateTime;
  * @param advisorGrade          Academic advisor's grade (0.0–5.0); null until EVALUATION phase.
  * @param companyGrade          Company representative's grade (0.0–5.0); null until EVALUATION phase.
  * @param finalGrade            Calculated final grade (average of advisor and company grades).
+ * @param certificateApprovedAt  Timestamp when coordination approved the constancia; null until approved.
+ * @param certificateApprovedBy  User ID of the approver; null until approved.
  * @param createdAt             Timestamp when the agreement was created.
  * @param updatedAt             Timestamp of the last update.
  */
@@ -64,6 +66,8 @@ public record AgreementResponse(
         BigDecimal advisorGrade,
         BigDecimal companyGrade,
         BigDecimal finalGrade,
+        LocalDateTime certificateApprovedAt,
+        Long certificateApprovedBy,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {}

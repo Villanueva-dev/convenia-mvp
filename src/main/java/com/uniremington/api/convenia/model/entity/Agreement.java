@@ -21,6 +21,7 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 /**
  * Central entity of the platform: a professional practice agreement
@@ -255,4 +256,19 @@ public class Agreement extends AuditableEntity {
      */
     @Column(name = "certificate_file_key")
     private String certificateFileKey;
+
+    /**
+     * Timestamp when a coordinator approved the certificate for download.
+     * Paired with {@link #certificateApprovedBy} via DB-level CHECK: either
+     * both NULL (pending approval) or both populated (approved).
+     */
+    @Column(name = "certificate_approved_at")
+    private LocalDateTime certificateApprovedAt;
+
+    /**
+     * Coordinator (or admin) who approved the certificate for download.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "certificate_approved_by_id")
+    private User certificateApprovedBy;
 }

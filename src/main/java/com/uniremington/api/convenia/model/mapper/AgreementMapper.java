@@ -34,6 +34,7 @@ public interface AgreementMapper {
     @Mapping(target = "practiceComponent",    expression = "java(agreement.getPracticeComponent().name())")
     @Mapping(target = "contractType",         expression = "java(agreement.getContractType().name())")
     @Mapping(target = "status",               expression = "java(agreement.getStatus().name())")
+    @Mapping(target = "certificateApprovedBy", expression = "java(agreement.getCertificateApprovedBy() != null ? agreement.getCertificateApprovedBy().getId() : null)")
     AgreementResponse toResponse(Agreement agreement);
 
     /**
